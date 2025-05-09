@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use indexmap::IndexMap;
 
-use super::{AnyValue, BuildRequest, ImportKind, MangleCacheEntry, Packet, ProtocolPacket};
+use super::{
+    AnyRequest, AnyResponse, AnyValue, BuildRequest, ImportKind, MangleCacheEntry, Packet,
+    ProtocolMessage, ProtocolPacket,
+};
 
 #[macro_export]
 macro_rules! count_idents {
@@ -24,8 +27,10 @@ macro_rules! count_idents {
 macro_rules! delegate {
   ($buf: ident, $self: ident; $($field: ident),*) => {
     $(
-      encode_key($buf, stringify!($field));
-      $self.$field.encode_into($buf);
+        paste::paste! {
+            encode_key($buf, stringify!([<$field:camel:lower>]));
+            $self.$field.encode_into($buf);
+        }
     )*
   };
 }
@@ -171,11 +176,58 @@ pub fn encode_u32_raw(buf: &mut Vec<u8>, value: u32) {
 }
 
 // Implementations moved from protocol.rs
-// 
+//
+//
+
+impl Encode for ProtocolMessage {
+    fn encode_into(&self, buf: &mut Vec<u8>) {
+        match self {
+            ProtocolMessage::Request(req) => req.encode_into(buf),
+            ProtocolMessage::Response(res) => res.encode_into(buf),
+        }
+    }
+}
+
+impl Encode for AnyRequest {
+    fn encode_into(&self, buf: &mut Vec<u8>) {
+        match self {
+            AnyRequest::Build(build) => build.encode_into(buf),
+            // AnyRequest::Import(import) => import.encode_into(buf),
+        }
+    }
+}
+
+impl Encode for AnyResponse {
+    fn encode_into(&self, buf: &mut Vec<u8>) {
+        match self {
+            AnyResponse::Build(build_response) => todo!(),
+            AnyResponse::Serve(serve_response) => todo!(),
+            AnyResponse::OnEnd(on_end_response) => todo!(),
+            AnyResponse::Rebuild(rebuild_response) => todo!(),
+            AnyResponse::Transform(transform_response) => todo!(),
+            AnyResponse::FormatMsgs(format_msgs_response) => todo!(),
+            AnyResponse::AnalyzeMetafile(analyze_metafile_response) => todo!(),
+            AnyResponse::OnStart(on_start_response) => on_start_response.encode_into(buf),
+            AnyResponse::Resolve(resolve_response) => todo!(),
+            AnyResponse::OnResolve(on_resolve_response) => todo!(),
+            AnyResponse::OnLoad(on_load_response) => todo!(),
+        }
+    }
+}
 
 impl Encode for ProtocolPacket {
     fn encode_into(&self, buf: &mut Vec<u8>) {
-        
+        let idx = buf.len();
+        buf.extend(std::iter::repeat(0).take(4));
+        // eprintln!("tag: {}", (self.id << 1) | !self.is_request as u32);
+        // eprintln!("len: {}", buf.len());
+        encode_u32_raw(buf, (self.id << 1) | !self.is_request as u32);
+        // eprintln!("encoding packet: {buf:?}");
+        self.value.encode_into(buf);
+        let end: u32 = buf.len() as u32;
+        let len: u32 = end - (idx as u32) - 4;
+        // eprintln!("len: {len}");
+        buf[idx..idx + 4].copy_from_slice(&len.to_le_bytes());
     }
 }
 
@@ -183,14 +235,14 @@ impl<T: Encode> Encode for Packet<T> {
     fn encode_into(&self, buf: &mut Vec<u8>) {
         let idx = buf.len();
         buf.extend(std::iter::repeat(0).take(4));
-        eprintln!("tag: {}", (self.id << 1) | !self.is_request as u32);
-        eprintln!("len: {}", buf.len());
+        // eprintln!("tag: {}", (self.id << 1) | !self.is_request as u32);
+        // eprintln!("len: {}", buf.len());
         encode_u32_raw(buf, (self.id << 1) | !self.is_request as u32);
-        eprintln!("encoding packet: {buf:?}");
+        // eprintln!("encoding packet: {buf:?}");
         self.value.encode_into(buf);
         let end: u32 = buf.len() as u32;
         let len: u32 = end - (idx as u32) - 4;
-        eprintln!("len: {len}");
+        // eprintln!("len: {len}");
         buf[idx..idx + 4].copy_from_slice(&len.to_le_bytes());
     }
 }
@@ -272,5 +324,33 @@ impl Encode for AnyValue {
             AnyValue::Vec(any_values) => any_values.encode_into(buf),
             AnyValue::Map(hash_map) => hash_map.encode_into(buf),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::*;
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn encode_protocol_packet() {
+        let packet = ProtocolPacket {
+            id: 0,
+            is_request: false,
+            value: ProtocolMessage::Response(AnyResponse::OnStart(OnStartResponse {
+                errors: vec![],
+                warnings: vec![],
+            })),
+        };
+        let mut buf = Vec::new();
+        packet.encode_into(&mut buf);
+        assert_eq!(
+            buf,
+            vec![
+                41, 0, 0, 0, 1, 0, 0, 0, 6, 2, 0, 0, 0, 6, 0, 0, 0, 101, 114, 114, 111, 114, 115,
+                5, 0, 0, 0, 0, 8, 0, 0, 0, 119, 97, 114, 110, 105, 110, 103, 115, 5, 0, 0, 0, 0
+            ]
+        );
     }
 }

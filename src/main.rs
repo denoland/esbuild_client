@@ -1,10 +1,14 @@
 use std::{path::Path, process::Stdio};
 
 pub use anyhow::Error as AnyError;
-use protocol::{AnyPacket, AnyValue, Encode, FromMap, OnStartResponse};
+use indexmap::IndexMap;
+use protocol::{
+    AnyPacket, AnyValue, Encode, FromMap, ImportKind, OnStartResponse, ProtocolMessage,
+    ProtocolPacket,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    process::ChildStdin,
+    process::{ChildStdin, ChildStdout},
     sync::{mpsc, oneshot},
 };
 mod protocol;
@@ -17,6 +21,92 @@ pub struct EsbuildService {
 // fn handle_packet(is_first_packet: bool, packet: &[u8]) {
 
 // }
+//
+
+async fn protocol_task(
+    stdout: ChildStdout,
+    stdin: ChildStdin,
+    ready_tx: oneshot::Sender<()>,
+    mut response_rx: mpsc::Receiver<ProtocolPacket>,
+    packet_tx: mpsc::Sender<AnyPacket>,
+) -> Result<(), AnyError> {
+    let mut stdout = stdout;
+    let mut ready_tx = Some(ready_tx);
+
+    let mut buffer = Vec::with_capacity(1024);
+    buffer.extend(std::iter::repeat(0).take(1024));
+    let mut read_into_offset = 0;
+    let mut offset = 0;
+
+    let mut first_packet = true;
+    let mut stdin = stdin;
+
+    loop {
+        tokio::select! {
+            res = response_rx.recv() => {
+                let packet: protocol::ProtocolPacket = res.unwrap();
+                eprintln!("got send packet from receiver: {packet:?}");
+                let mut encoded = Vec::new();
+                packet.encode_into(&mut encoded);
+                // eprintln!("encoded: {:?}", encoded);
+                stdin.write_all(&encoded).await?;
+                eprintln!("wrote packet");
+            }
+            read_length = stdout.read(&mut buffer[read_into_offset..]) => {
+                let Ok(read_length) = read_length else {
+                    eprintln!("Error reading stdout");
+                    continue;
+                };
+                // eprintln!(
+                //     "read_length: {}; read_into_offset: {}; offset: {}; buffer.len(): {}",
+                //     read_length,
+                //     read_into_offset,
+                //     offset,
+                //     buffer.len()
+                //     );
+                    read_into_offset += read_length;
+                    if read_into_offset >= buffer.len() {
+                        buffer.extend(std::iter::repeat(0).take(1024));
+                    }
+                    while offset + 4 <= read_into_offset {
+                        let length =
+                            u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap()) as usize;
+                        eprintln!(
+                            "length: {}; offset: {}; read_into_offset: {}",
+                            length, offset, read_into_offset
+                        );
+                        if offset + 4 + length > read_into_offset {
+                            break;
+                        }
+                        offset += 4;
+
+                        let message = &buffer[offset..offset + length];
+                        // eprintln!("here");
+                        if first_packet {
+                            eprintln!("first packet");
+                            first_packet = false;
+                            let version = String::from_utf8(message.to_vec()).unwrap();
+                            eprintln!("version: {}", version);
+                            ready_tx.take().unwrap().send(()).unwrap();
+                        } else {
+                            match protocol::decode_any_packet(message) {
+                                Ok(packet) => {
+                                    eprintln!("decoded packet: {packet:?}");
+                                    packet_tx.send(packet).await.unwrap()
+                                },
+                                Err(e) => eprintln!("Error decoding packet: {}", e),
+                            }
+                        }
+
+                        offset += length;
+                    }
+            }
+        }
+    }
+
+    #[allow(unreachable_code)]
+    Ok::<(), AnyError>(())
+}
 
 impl EsbuildService {
     pub fn new(
@@ -26,7 +116,6 @@ impl EsbuildService {
         (
             Self,
             oneshot::Receiver<()>,
-            ChildStdin,
             mpsc::Receiver<AnyPacket>,
             mpsc::Sender<protocol::ProtocolPacket>,
         ),
@@ -45,83 +134,44 @@ impl EsbuildService {
 
         let (ready_tx, ready_rx) = oneshot::channel();
         let (packet_tx, packet_rx) = mpsc::channel(100);
-        let (response_tx, mut response_rx) = mpsc::channel(100);
-        // let (stdin_sender, stdin_receiver) = mpsc::channel(100);
-        // let (stdout_sender, stdout_receiver) = mpsc::channel(100);
-        //
+        let (response_tx, response_rx) = mpsc::channel(100);
+        tokio::spawn(protocol_task(
+            stdout,
+            stdin,
+            ready_tx,
+            response_rx,
+            packet_tx,
+        ));
 
-        tokio::spawn(async move {
-            let mut stdout = stdout;
-            let mut ready_tx = Some(ready_tx);
-
-            let mut buffer = Vec::with_capacity(1024);
-            buffer.extend(std::iter::repeat(0).take(1024));
-            let mut read_into_offset = 0;
-            let mut offset = 0;
-
-            let mut first_packet = true;
-
-            loop {
-                tokio::select! {
-                    res = response_rx.recv() => {
-                        let packet: protocol::ProtocolPacket = res.unwrap();
-                        let mut encoded = Vec::new();
-                        packet.encode_into(&mut encoded);
-                        stdin.write_all(&encoded).await?;
-                    }
-                    read_length = stdout.read(&mut buffer[read_into_offset..]) => {
-                        let Ok(read_length) = read_length else {
-                            eprintln!("Error reading stdout");
-                            continue;
-                        };
-                        eprintln!(
-                            "read_length: {}; read_into_offset: {}; offset: {}; buffer.len(): {}",
-                            read_length,
-                            read_into_offset,
-                            offset,
-                            buffer.len()
-                            );
-                            read_into_offset += read_length;
-                            if read_into_offset >= buffer.len() {
-                                buffer.extend(std::iter::repeat(0).take(1024));
-                            }
-                            while offset + 4 <= read_into_offset {
-                                let length =
-                                    u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap()) as usize;
-                                eprintln!(
-                                    "length: {}; offset: {}; read_into_offset: {}",
-                                    length, offset, read_into_offset
-                                );
-                                if offset + 4 + length > read_into_offset {
-                                    break;
-                                }
-                                offset += 4;
-
-                                let message = &buffer[offset..offset + length];
-                                if first_packet {
-                                    eprintln!("first packet");
-                                    first_packet = false;
-                                    let version = String::from_utf8(message.to_vec()).unwrap();
-                                    eprintln!("version: {}", version);
-                                    ready_tx.take().unwrap().send(()).unwrap();
-                                } else {
-                                    match protocol::decode_any_packet(message) {
-                                        Ok(packet) => packet_tx.send(packet).await.unwrap(),
-                                        Err(e) => eprintln!("Error decoding packet: {}", e),
-                                    }
-                                }
-
-                                offset += length;
-                            }
-                    }
-                }
-            }
-
-            eprintln!("exited")
-        });
-
-        Ok((Self { esbuild }, ready_rx, stdin, packet_rx, response_tx))
+        Ok((Self { esbuild }, ready_rx, packet_rx, response_tx))
     }
+}
+
+pub struct OnResolveArgs {
+    path: String,
+    importer: Option<String>,
+    kind: ImportKind,
+    namespace: Option<String>,
+    resolve_dir: Option<String>,
+    with: IndexMap<String, AnyValue>,
+}
+
+pub struct OnResolveResult {
+    path: String,
+    namespace: Option<String>,
+}
+
+pub trait PluginInfo {
+    fn provides_on_resolve(&self) -> bool {
+        false
+    }
+}
+
+pub trait Plugin: PluginInfo {
+    fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError> {
+        anyhow::bail!("not implemented")
+    }
+    // fn on_load(&self)
 }
 
 pub struct EsbuildChannel {
@@ -156,13 +206,25 @@ async fn handle_packet(
                                     is_request: false,
                                     value: protocol::ProtocolMessage::Response(
                                         protocol::AnyResponse::OnStart(OnStartResponse {
-                                            errors: None,
-                                            warnings: None,
+                                            errors: vec![],
+                                            warnings: vec![],
                                         }),
                                     ),
                                 })
                                 .await?;
                             Ok(())
+                        }
+                        "on-resolve" => {
+                            eprintln!("got on resolve");
+                            let on_resolve = protocol::OnResolveRequest::from_map(index_map)?;
+                            eprintln!("on-resolve: {:?}", on_resolve);
+                            return Ok(());
+
+                            // response_tx
+                            //     .send(protocol::ProtocolPacket {
+                            //         id: packet.id,
+                            //         is_request: false,
+                            //     })
                         }
                         _ => {
                             todo!("handle: {:?}", packet.value)
@@ -187,30 +249,38 @@ async fn main() {
     let path = "/Users/nathanwhit/Library/Caches/esbuild/bin/@esbuild-darwin-arm64@0.25.4";
     let path = Path::new(&path);
 
-    let (mut esbuild, ready_rx, mut stdin, packet_rx, response_tx) =
+    let (mut esbuild, ready_rx, packet_rx, response_tx) =
         EsbuildService::new(path, "0.25.4").unwrap();
     ready_rx.await.unwrap();
 
-    tokio::spawn(async move {
-        let mut packet_rx = packet_rx;
-        loop {
-            tokio::select! {
-                res = esbuild.esbuild.wait() => {
-                    eprintln!("esbuild exited: {:?}", res);
-                    std::process::exit(res.unwrap().code().unwrap_or(1));
-                }
-                packet = packet_rx.recv() => {
+    {
+        let response_tx = response_tx.clone();
+        tokio::spawn(async move {
+            let mut packet_rx = packet_rx;
+            loop {
+                tokio::select! {
+                    res = esbuild.esbuild.wait() => {
+                        eprintln!("esbuild exited: {:?}", res);
+                        std::process::exit(res.unwrap().code().unwrap_or(1));
+                    }
+                    packet = packet_rx.recv() => {
+                        eprintln!("got packet from receiver: {packet:?}");
 
-                    if let Some(packet) = packet {
-                        handle_packet(packet, &response_tx).await?;
+                        if let Some(packet) = packet {
+                            let _ = handle_packet(packet, &response_tx).await.inspect_err(
+                                |err| {
+                                    eprintln!("failed to handle packet {err}");
+                                }
+                            );
+                        }
                     }
                 }
             }
-        }
 
-        #[allow(unreachable_code)]
-        Ok::<(), AnyError>(())
-    });
+            #[allow(unreachable_code)]
+            Ok::<(), AnyError>(())
+        });
+    }
 
     let req = protocol::BuildRequest {
         entries: vec![("".into(), "./testing.ts".into())],
@@ -240,13 +310,13 @@ async fn main() {
                 on_end: false,
                 on_resolve: (vec![protocol::OnResolveSetupOptions {
                     id: 0,
-                    filter: ".*$".into(),
-                    namespace: "deno".into(),
+                    filter: ".*".into(),
+                    namespace: "".into(),
                 }]),
                 on_load: (vec![protocol::OnLoadSetupOptions {
                     id: 0,
-                    filter: ".*$".into(),
-                    namespace: "deno".into(),
+                    filter: ".*".into(),
+                    namespace: "".into(),
                 }]),
             },
             protocol::BuildPlugin {
@@ -268,26 +338,13 @@ async fn main() {
     };
 
     let id = 0;
-    let packet = protocol::Packet {
+    let packet = protocol::ProtocolPacket {
         id,
         is_request: true,
-        value: req,
+        value: protocol::ProtocolMessage::Request(protocol::AnyRequest::Build(req)),
     };
-
-    let mut buf = Vec::new();
-    packet.encode_into(&mut buf);
-
-    eprintln!(
-        "encoded packet: {}; {}",
-        buf.iter()
-            .map(|b| format!("{b:x}"))
-            .collect::<Vec<_>>()
-            .join(""),
-        buf.len()
-    );
-
+    response_tx.send(packet).await.unwrap();
     eprintln!("sending packet");
-    stdin.write_all(&buf).await.unwrap();
 
     eprintln!("sent packet");
     std::future::pending::<()>().await;

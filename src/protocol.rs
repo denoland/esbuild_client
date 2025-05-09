@@ -1,6 +1,7 @@
 pub mod encode;
 pub mod serd;
 
+use anyhow::Context;
 use std::{collections::HashMap, fmt::Display, hash::Hash};
 
 use crate::{impl_encode_command, impl_encode_struct};
@@ -83,7 +84,7 @@ impl FromAnyValue for u32 {
     fn from_any_value(value: AnyValue) -> Result<Self, anyhow::Error> {
         match value {
             AnyValue::U32(u) => Ok(u),
-            _ => Err(anyhow::anyhow!("expected u32")),
+            _ => Err(anyhow::anyhow!("expected u32, got {value:?}")),
         }
     }
 }
@@ -163,7 +164,7 @@ pub struct BuildRequest {
     pub node_paths: Vec<String>,
     pub context: bool,
     pub plugins: Option<Vec<BuildPlugin>>,
-    pub mangle_cache: Option<HashMap<String, MangleCacheEntry>>,
+    pub mangle_cache: Option<IndexMap<String, MangleCacheEntry>>,
 }
 
 // Placeholder types - replace with actual definitions as needed
@@ -204,7 +205,25 @@ impl_encode_struct!(for Location { file, namespace, line, column, length, line_t
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct PartialMessage {}
+pub struct PartialMessage {
+    pub id: Option<String>,
+    pub plugin_name: Option<String>,
+    pub text: Option<String>,
+    pub location: Option<Location>,
+    pub notes: Option<Vec<Note>>,
+    pub detail: Option<AnyValue>,
+}
+
+// export interface PartialMessage {
+//     id?: string;
+//     pluginName?: string;
+//     text?: string;
+//     location?: Partial<Location> | null;
+//     notes?: PartialNote[];
+//     detail?: any;
+// }
+
+impl_encode_struct!(for PartialMessage {});
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -233,6 +252,22 @@ pub enum ImportKind {
     UrlToken,
 }
 
+impl FromAnyValue for ImportKind {
+    fn from_any_value(value: AnyValue) -> Result<Self, anyhow::Error> {
+        let s = value.as_string()?;
+        Ok(match s.as_str() {
+            "entry-point" => ImportKind::EntryPoint,
+            "import-statement" => ImportKind::ImportStatement,
+            "require-call" => ImportKind::RequireCall,
+            "dynamic-import" => ImportKind::DynamicImport,
+            "require-resolve" => ImportKind::RequireResolve,
+            "import-rule" => ImportKind::ImportRule,
+            "composes-from" => ImportKind::ComposesFrom,
+            "url-token" => ImportKind::UrlToken,
+            _ => return Err(anyhow::anyhow!("invalid import kind: {}", s)),
+        })
+    }
+}
 // Equivalent to TypeScript MangleCacheEntry: string | false
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -344,7 +379,7 @@ pub struct BuildResponse {
     pub warnings: Vec<Message>,
     pub output_files: Option<Vec<BuildOutputFile>>,
     pub metafile: Option<String>,
-    pub mangle_cache: Option<HashMap<String, MangleCacheEntry>>,
+    pub mangle_cache: Option<IndexMap<String, MangleCacheEntry>>,
     pub write_to_stdout: Option<Vec<u8>>,
 }
 
@@ -358,7 +393,7 @@ pub struct OnEndRequest {
     pub warnings: Vec<Message>,
     pub output_files: Option<Vec<BuildOutputFile>>,
     pub metafile: Option<String>,
-    pub mangle_cache: Option<HashMap<String, MangleCacheEntry>>,
+    pub mangle_cache: Option<IndexMap<String, MangleCacheEntry>>,
     pub write_to_stdout: Option<Vec<u8>>,
 }
 
@@ -462,7 +497,7 @@ pub struct TransformRequest {
     pub flags: Vec<String>,
     pub input: Vec<u8>,
     pub input_fs: bool,
-    pub mangle_cache: Option<HashMap<String, MangleCacheEntry>>,
+    pub mangle_cache: Option<IndexMap<String, MangleCacheEntry>>,
 }
 
 impl_encode_command!(for TransformRequest {
@@ -480,7 +515,7 @@ pub struct TransformResponse {
     pub map: String,
     pub map_fs: bool,
     pub legal_comments: Option<String>,
-    pub mangle_cache: Option<HashMap<String, MangleCacheEntry>>,
+    pub mangle_cache: Option<IndexMap<String, MangleCacheEntry>>,
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -539,9 +574,11 @@ impl_encode_command!(for OnStartRequest {
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct OnStartResponse {
-    pub errors: Option<Vec<PartialMessage>>,
-    pub warnings: Option<Vec<PartialMessage>>,
+    pub errors: Vec<PartialMessage>,
+    pub warnings: Vec<PartialMessage>,
 }
+
+impl_encode_struct!(for OnStartResponse { errors, warnings });
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -555,7 +592,7 @@ pub struct ResolveRequest {
     pub resolve_dir: Option<String>,
     pub kind: Option<String>, // Consider using an enum if kinds are fixed
     pub plugin_data: Option<u32>, // Assuming u32 for opaque data, adjust if needed
-    pub with: Option<HashMap<String, String>>,
+    pub with: Option<IndexMap<String, String>>,
 }
 
 impl_encode_command!(for ResolveRequest {
@@ -585,10 +622,10 @@ pub struct OnResolveRequest {
     pub path: String,
     pub importer: String,
     pub namespace: String,
-    pub resolve_dir: String,
+    pub resolve_dir: Option<String>,
     pub kind: ImportKind,
-    pub plugin_data: u32,
-    pub with: HashMap<String, String>,
+    pub plugin_data: Option<u32>,
+    pub with: IndexMap<String, String>,
 }
 
 impl_encode_command!(for OnResolveRequest {
@@ -623,7 +660,7 @@ pub struct OnLoadRequest {
     pub namespace: String,
     pub suffix: String,
     pub plugin_data: u32,
-    pub with: HashMap<String, String>,
+    pub with: IndexMap<String, String>,
 }
 
 impl_encode_command!(for OnLoadRequest {
@@ -649,21 +686,21 @@ pub struct OnLoadResponse {
 #[derive(Debug, Clone)]
 pub enum AnyRequest {
     Build(BuildRequest),
-    Serve(ServeRequest),
-    OnEnd(OnEndRequest),
-    Ping(PingRequest),
-    Rebuild(RebuildRequest),
-    Dispose(DisposeRequest),
-    Cancel(CancelRequest),
-    Watch(WatchRequest),
-    OnServe(OnServeRequest),
-    Transform(TransformRequest),
-    FormatMsgs(FormatMsgsRequest),
-    AnalyzeMetafile(AnalyzeMetafileRequest),
-    OnStart(OnStartRequest),
-    Resolve(ResolveRequest),
-    OnResolve(OnResolveRequest),
-    OnLoad(OnLoadRequest),
+    // Serve(ServeRequest),
+    // OnEnd(OnEndRequest),
+    // Ping(PingRequest),
+    // Rebuild(RebuildRequest),
+    // Dispose(DisposeRequest),
+    // Cancel(CancelRequest),
+    // Watch(WatchRequest),
+    // OnServe(OnServeRequest),
+    // Transform(TransformRequest),
+    // FormatMsgs(FormatMsgsRequest),
+    // AnalyzeMetafile(AnalyzeMetafileRequest),
+    // OnStart(OnStartRequest),
+    // Resolve(ResolveRequest),
+    // OnResolve(OnResolveRequest),
+    // OnLoad(OnLoadRequest),
 }
 
 #[derive(Debug, Clone)]
@@ -713,7 +750,8 @@ pub struct ProtocolPacket {
 
 // impl Decode
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
 pub enum AnyValue {
     Null,
     Bool(bool),
@@ -755,11 +793,6 @@ impl Decode for u32 {
 impl Decode for String {
     fn decode_from(buf: &mut Buf) -> Result<Self, anyhow::Error> {
         let length = buf.read_u32() as usize;
-        eprintln!(
-            "string expected length: {}; have {}",
-            length,
-            buf.buf.len() - buf.idx
-        );
         let mut string = vec![0; length];
         buf.read_n(length, &mut string);
         String::from_utf8(string).map_err(|e| anyhow::anyhow!("Failed to decode string: {}", e))
@@ -861,8 +894,11 @@ macro_rules! get {
             .get($key)
             .ok_or_else(|| anyhow::anyhow!("Missing field: {}", $key))
             .and_then(|v| v.clone().to_type())
+            .context(format!("on key: {}", $key))
     };
 }
+
+// impl FromAnyValue for Hash
 
 // impl Decode for AnyRequest {
 //     fn decode_from(buf: &mut Buf) -> Result<Self, anyhow::Error> {
@@ -911,5 +947,47 @@ impl FromAnyValue for OnStartRequest {
         let map = value.as_map()?;
         let key = get!(map, "key")?;
         Ok(OnStartRequest { key })
+    }
+}
+
+/*
+#[derive(serde::Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct OnResolveRequest {
+    // command: "on-resolve";
+    pub key: u32,
+    pub ids: Vec<u32>,
+    pub path: String,
+    pub importer: String,
+    pub namespace: String,
+    pub resolve_dir: String,
+    pub kind: ImportKind,
+    pub plugin_data: u32,
+    pub with: IndexMap<String, String>,
+}
+
+ */
+impl FromMap for OnResolveRequest {
+    fn from_map(map: &IndexMap<String, AnyValue>) -> Result<Self, anyhow::Error> {
+        let key = get!(map, "key")?;
+        let ids = get!(map, "ids")?;
+        let path = get!(map, "path")?;
+        let importer = get!(map, "importer")?;
+        let namespace = get!(map, "namespace")?;
+        let resolve_dir = get!(map, "resolveDir")?;
+        let plugin_data = get!(map, "pluginData")?;
+        let with = get!(map, "with")?;
+        let kind = get!(map, "kind")?;
+        Ok(OnResolveRequest {
+            key,
+            ids,
+            path,
+            importer,
+            namespace,
+            resolve_dir,
+            kind,
+            plugin_data,
+            with,
+        })
     }
 }
