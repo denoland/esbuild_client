@@ -1,0 +1,7 @@
+/target
+
+**/.claude/settings.local.json
+.docs-cache
+.claude
+.vscode
+*.txt
