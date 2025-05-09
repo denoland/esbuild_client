@@ -2,7 +2,7 @@ pub mod encode;
 pub mod serd;
 
 use anyhow::Context;
-use std::{collections::HashMap, fmt::Display, hash::Hash};
+use std::{fmt::Display, hash::Hash};
 
 use crate::{impl_encode_command, impl_encode_struct};
 #[allow(unused_imports)]
@@ -917,11 +917,11 @@ macro_rules! get {
 //     }
 // }
 
-impl Decode for AnyResponse {
-    fn decode_from(buf: &mut Buf) -> Result<Self, anyhow::Error> {
-        todo!()
-    }
-}
+// impl Decode for AnyResponse {
+//     fn decode_from(buf: &mut Buf) -> Result<Self, anyhow::Error> {
+//         todo!()
+//     }
+// }
 
 pub fn decode_any_packet(buf: &[u8]) -> Result<AnyPacket, anyhow::Error> {
     let mut buf = Buf::new(buf);

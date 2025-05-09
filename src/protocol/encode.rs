@@ -198,6 +198,7 @@ impl Encode for AnyRequest {
 }
 
 impl Encode for AnyResponse {
+    #[allow(unused)]
     fn encode_into(&self, buf: &mut Vec<u8>) {
         match self {
             AnyResponse::Build(build_response) => todo!(),

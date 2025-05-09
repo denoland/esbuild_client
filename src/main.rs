@@ -1,11 +1,9 @@
+#![allow(dead_code)]
 use std::{path::Path, process::Stdio};
 
 pub use anyhow::Error as AnyError;
 use indexmap::IndexMap;
-use protocol::{
-    AnyPacket, AnyValue, Encode, FromMap, ImportKind, OnStartResponse, ProtocolMessage,
-    ProtocolPacket,
-};
+use protocol::{AnyPacket, AnyValue, Encode, FromMap, ImportKind, OnStartResponse, ProtocolPacket};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::{ChildStdin, ChildStdout},
@@ -23,6 +21,76 @@ pub struct EsbuildService {
 // }
 //
 
+struct ProtocolState {
+    buffer: Vec<u8>,
+    read_into_offset: usize,
+    offset: usize,
+    first_packet: bool,
+    ready_tx: Option<oneshot::Sender<()>>,
+    packet_tx: mpsc::Sender<AnyPacket>,
+}
+
+impl ProtocolState {
+    fn new(ready_tx: oneshot::Sender<()>, packet_tx: mpsc::Sender<AnyPacket>) -> Self {
+        let mut buffer = Vec::with_capacity(1024);
+        buffer.extend(std::iter::repeat(0).take(1024));
+        let read_into_offset = 0;
+        let offset = 0;
+
+        let first_packet = true;
+        Self {
+            buffer,
+            first_packet,
+            offset,
+            read_into_offset,
+            ready_tx: Some(ready_tx),
+            packet_tx,
+        }
+    }
+}
+
+async fn handle_read(amount: usize, state: &mut ProtocolState) {
+    state.read_into_offset += amount;
+    if state.read_into_offset >= state.buffer.len() {
+        state.buffer.extend(std::iter::repeat(0).take(1024));
+    }
+    while state.offset + 4 <= state.read_into_offset {
+        let length = u32::from_le_bytes(
+            state.buffer[state.offset..state.offset + 4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        // eprintln!(
+        //     "length: {}; offset: {}; read_into_offset: {}",
+        //     length, offset, read_into_offset
+        // );
+        if state.offset + 4 + length > state.read_into_offset {
+            break;
+        }
+        state.offset += 4;
+
+        let message = &state.buffer[state.offset..state.offset + length];
+        // eprintln!("here");
+        if state.first_packet {
+            // eprintln!("first packet");
+            state.first_packet = false;
+            let version = String::from_utf8(message.to_vec()).unwrap();
+            eprintln!("version: {}", version);
+            state.ready_tx.take().unwrap().send(()).unwrap();
+        } else {
+            match protocol::decode_any_packet(message) {
+                Ok(packet) => {
+                    eprintln!("decoded packet: {packet:?}");
+                    state.packet_tx.send(packet).await.unwrap()
+                }
+                Err(e) => eprintln!("Error decoding packet: {}", e),
+            }
+        }
+
+        state.offset += length;
+    }
+}
+
 async fn protocol_task(
     stdout: ChildStdout,
     stdin: ChildStdin,
@@ -31,14 +99,8 @@ async fn protocol_task(
     packet_tx: mpsc::Sender<AnyPacket>,
 ) -> Result<(), AnyError> {
     let mut stdout = stdout;
-    let mut ready_tx = Some(ready_tx);
 
-    let mut buffer = Vec::with_capacity(1024);
-    buffer.extend(std::iter::repeat(0).take(1024));
-    let mut read_into_offset = 0;
-    let mut offset = 0;
-
-    let mut first_packet = true;
+    let mut state = ProtocolState::new(ready_tx, packet_tx);
     let mut stdin = stdin;
 
     loop {
@@ -52,11 +114,12 @@ async fn protocol_task(
                 stdin.write_all(&encoded).await?;
                 eprintln!("wrote packet");
             }
-            read_length = stdout.read(&mut buffer[read_into_offset..]) => {
+            read_length = stdout.read(&mut state.buffer[state.read_into_offset..]) => {
                 let Ok(read_length) = read_length else {
                     eprintln!("Error reading stdout");
                     continue;
                 };
+                handle_read(read_length, &mut state).await;
                 // eprintln!(
                 //     "read_length: {}; read_into_offset: {}; offset: {}; buffer.len(): {}",
                 //     read_length,
@@ -64,42 +127,7 @@ async fn protocol_task(
                 //     offset,
                 //     buffer.len()
                 //     );
-                    read_into_offset += read_length;
-                    if read_into_offset >= buffer.len() {
-                        buffer.extend(std::iter::repeat(0).take(1024));
-                    }
-                    while offset + 4 <= read_into_offset {
-                        let length =
-                            u32::from_le_bytes(buffer[offset..offset + 4].try_into().unwrap()) as usize;
-                        eprintln!(
-                            "length: {}; offset: {}; read_into_offset: {}",
-                            length, offset, read_into_offset
-                        );
-                        if offset + 4 + length > read_into_offset {
-                            break;
-                        }
-                        offset += 4;
 
-                        let message = &buffer[offset..offset + length];
-                        // eprintln!("here");
-                        if first_packet {
-                            eprintln!("first packet");
-                            first_packet = false;
-                            let version = String::from_utf8(message.to_vec()).unwrap();
-                            eprintln!("version: {}", version);
-                            ready_tx.take().unwrap().send(()).unwrap();
-                        } else {
-                            match protocol::decode_any_packet(message) {
-                                Ok(packet) => {
-                                    eprintln!("decoded packet: {packet:?}");
-                                    packet_tx.send(packet).await.unwrap()
-                                },
-                                Err(e) => eprintln!("Error decoding packet: {}", e),
-                            }
-                        }
-
-                        offset += length;
-                    }
             }
         }
     }
@@ -109,13 +137,12 @@ async fn protocol_task(
 }
 
 impl EsbuildService {
-    pub fn new(
+    pub async fn new(
         path: impl AsRef<Path>,
         version: &str,
     ) -> Result<
         (
             Self,
-            oneshot::Receiver<()>,
             mpsc::Receiver<AnyPacket>,
             mpsc::Sender<protocol::ProtocolPacket>,
         ),
@@ -143,7 +170,9 @@ impl EsbuildService {
             packet_tx,
         ));
 
-        Ok((Self { esbuild }, ready_rx, packet_rx, response_tx))
+        let _ = ready_rx.await;
+
+        Ok((Self { esbuild }, packet_rx, response_tx))
     }
 }
 
@@ -162,6 +191,7 @@ pub struct OnResolveResult {
 }
 
 pub trait PluginInfo {
+    fn name(&self) -> &'static str;
     fn provides_on_resolve(&self) -> bool {
         false
     }
@@ -172,20 +202,6 @@ pub trait Plugin: PluginInfo {
         anyhow::bail!("not implemented")
     }
     // fn on_load(&self)
-}
-
-pub struct EsbuildChannel {
-    stdin_sender: mpsc::Sender<Vec<u8>>,
-    stdout_receiver: mpsc::Receiver<Vec<u8>>,
-}
-
-macro_rules! get {
-    ($self:expr, $key:expr) => {
-        $self
-            .get($key)
-            .ok_or_else(|| anyhow::anyhow!("Missing field: {}", $key))
-            .and_then(|v| v.clone().to_type())
-    };
 }
 
 async fn handle_packet(
@@ -249,9 +265,7 @@ async fn main() {
     let path = "/Users/nathanwhit/Library/Caches/esbuild/bin/@esbuild-darwin-arm64@0.25.4";
     let path = Path::new(&path);
 
-    let (mut esbuild, ready_rx, packet_rx, response_tx) =
-        EsbuildService::new(path, "0.25.4").unwrap();
-    ready_rx.await.unwrap();
+    let (mut esbuild, packet_rx, response_tx) = EsbuildService::new(path, "0.25.4").await.unwrap();
 
     {
         let response_tx = response_tx.clone();

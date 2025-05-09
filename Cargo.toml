@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.98"
+async-trait = "0.1.88"
 indexmap = { version = "2.9.0", features = ["serde"] }
 paste = "1.0.15"
 pretty_assertions = "1.4.1"
