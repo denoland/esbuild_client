@@ -2,13 +2,66 @@ pub mod encode;
 pub mod serd;
 
 use anyhow::Context;
-use std::{fmt::Display, hash::Hash};
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+};
+use tokio::sync::oneshot;
 
 use crate::{impl_encode_command, impl_encode_struct};
 #[allow(unused_imports)]
 use encode::encode_length_delimited;
 pub use encode::{Encode, encode_key, encode_u32_raw};
 use indexmap::IndexMap;
+
+macro_rules! get {
+    ($self:expr, $key:expr) => {
+        $self
+            .get($key)
+            .ok_or_else(|| anyhow::anyhow!("Missing field: {}", $key))
+            .and_then(|v| v.clone().to_type())
+            .context(format!("on key: {}", $key))
+    };
+}
+
+macro_rules! impl_from_map {
+    (for $t: ty { $( $(#[$optional:ident])? $field: ident),* }) => {
+        impl FromMap for $t {
+            fn from_map(map: &IndexMap<String, AnyValue>) -> Result<Self, anyhow::Error> {
+                $(
+                    $crate::protocol::impl_from_map!(@helper; map; $($optional)? $field);
+                )*
+                Ok(Self { $($field),* })
+            }
+        }
+    };
+    (@helper; $self: ident; optional $field: ident) => {
+        let $field = if let Some(val) = $self.get(&encode::snake_to_camel(stringify!($field))) {
+            val.clone().to_type()?
+        } else {
+            None
+        };
+    };
+    (@helper; $self: ident; $field: ident) => {
+        let $field = get!($self, &encode::snake_to_camel(stringify!($field)))?;
+    };
+}
+
+macro_rules! protocol_impls {
+    (for $t: ty { $( $(#[$optional:ident])? $field: ident),* }) => {
+        impl_from_map!(for $t { $( $(#[$optional])? $field),* });
+        impl_encode_struct!(for $t { $($field),* });
+    };
+}
+
+macro_rules! command_protocol_impls {
+    (for $t: ty { const Command = $command: literal; $( $(#[$optional:ident])? $field: ident),* }) => {
+        impl_from_map!(for $t { $( $(#[$optional])? $field),* });
+        impl_encode_command!(for $t { const Command = $command; $($field),* });
+    };
+}
+
+pub(crate) use impl_from_map;
 
 #[derive(Debug, thiserror::Error, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +122,12 @@ impl<'a> Buf<'a> {
 
 pub trait FromAnyValue: Sized {
     fn from_any_value(value: AnyValue) -> Result<Self, anyhow::Error>;
+}
+
+impl FromAnyValue for AnyValue {
+    fn from_any_value(value: AnyValue) -> Result<Self, anyhow::Error> {
+        Ok(value)
+    }
 }
 
 impl FromAnyValue for String {
@@ -143,6 +202,15 @@ impl<T: FromAnyValue> FromAnyValue for Option<T> {
     }
 }
 
+impl<T> FromAnyValue for T
+where
+    T: FromMap,
+{
+    fn from_any_value(value: AnyValue) -> Result<Self, anyhow::Error> {
+        Self::from_map(value.as_map()?)
+    }
+}
+
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Packet<T> {
@@ -158,8 +226,8 @@ pub struct BuildRequest {
     pub entries: Vec<(String, String)>,
     pub flags: Vec<String>,
     pub write: bool,
-    pub stdin_contents: Option<Vec<u8>>,
-    pub stdin_resolve_dir: Option<String>,
+    pub stdin_contents: OptionNull<Vec<u8>>,
+    pub stdin_resolve_dir: OptionNull<String>,
     pub abs_working_dir: String,
     pub node_paths: Vec<String>,
     pub context: bool,
@@ -179,7 +247,7 @@ pub struct Message {
     // detail: any
 }
 
-impl_encode_struct!(for Message { id, plugin_name, text, location, notes });
+protocol_impls!(for Message { id, plugin_name, text, #[optional] location, notes });
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -187,7 +255,7 @@ pub struct Note {
     pub text: String,
     pub location: Option<Location>,
 }
-impl_encode_struct!(for Note { text, location });
+protocol_impls!(for Note { text, #[optional] location });
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -201,7 +269,7 @@ pub struct Location {
     pub suggestion: String,
 }
 
-impl_encode_struct!(for Location { file, namespace, line, column, length, line_text, suggestion });
+protocol_impls!(for Location { file, namespace, line, column, length, line_text, suggestion });
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -214,16 +282,7 @@ pub struct PartialMessage {
     pub detail: Option<AnyValue>,
 }
 
-// export interface PartialMessage {
-//     id?: string;
-//     pluginName?: string;
-//     text?: string;
-//     location?: Partial<Location> | null;
-//     notes?: PartialNote[];
-//     detail?: any;
-// }
-
-impl_encode_struct!(for PartialMessage {});
+protocol_impls!(for PartialMessage { #[optional] id, #[optional] plugin_name, #[optional] text, #[optional] location, #[optional] notes, #[optional] detail });
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -273,7 +332,17 @@ impl FromAnyValue for ImportKind {
 #[serde(rename_all = "camelCase")]
 pub enum MangleCacheEntry {
     StringValue(String),
-    FalseValue,
+    BoolValue(bool),
+}
+
+impl FromAnyValue for MangleCacheEntry {
+    fn from_any_value(value: AnyValue) -> Result<Self, anyhow::Error> {
+        match value {
+            AnyValue::Bool(b) => Ok(MangleCacheEntry::BoolValue(b)),
+            AnyValue::String(s) => Ok(MangleCacheEntry::StringValue(s)),
+            value => Err(anyhow::anyhow!("invalid mangle cache entry: {:?}", value)),
+        }
+    }
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -383,6 +452,10 @@ pub struct BuildResponse {
     pub write_to_stdout: Option<Vec<u8>>,
 }
 
+impl_from_map!(for BuildResponse {
+    errors, warnings, #[optional] output_files, #[optional] metafile, #[optional] mangle_cache, #[optional] write_to_stdout
+});
+
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct OnEndRequest {
@@ -414,7 +487,7 @@ pub struct BuildOutputFile {
     pub hash: String,
 }
 
-impl_encode_struct!(for BuildOutputFile { path, contents, hash });
+protocol_impls!(for BuildOutputFile { path, contents, hash });
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -628,10 +701,37 @@ pub struct OnResolveRequest {
     pub with: IndexMap<String, String>,
 }
 
-impl_encode_command!(for OnResolveRequest {
-  const Command = "on-resolve";
-  key, ids, path, importer, namespace, resolve_dir, kind, plugin_data, with
+impl_from_map!(for OnResolveRequest {
+    key, ids, path, importer, namespace, #[optional] resolve_dir, kind, #[optional] plugin_data, with
 });
+
+#[derive(serde::Deserialize, Clone)]
+#[serde(transparent)]
+pub struct OptionNull<T>(Option<T>);
+
+impl<T> OptionNull<T> {
+    pub fn new(value: Option<T>) -> Self {
+        Self(value)
+    }
+}
+
+impl<T> From<OptionNull<T>> for Option<T> {
+    fn from(value: OptionNull<T>) -> Self {
+        value.0
+    }
+}
+
+impl<T> From<Option<T>> for OptionNull<T> {
+    fn from(value: Option<T>) -> Self {
+        Self(value)
+    }
+}
+
+impl<T: Debug> Debug for OptionNull<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -649,6 +749,21 @@ pub struct OnResolveResponse {
     pub watch_files: Option<Vec<String>>,
     pub watch_dirs: Option<Vec<String>>,
 }
+
+impl_encode_struct!(for OnResolveResponse {
+    id,
+    plugin_name,
+    errors,
+    warnings,
+    path,
+    external,
+    side_effects,
+    namespace,
+    suffix,
+    plugin_data,
+    watch_files,
+    watch_dirs
+});
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -701,6 +816,11 @@ pub enum AnyRequest {
     // Resolve(ResolveRequest),
     // OnResolve(OnResolveRequest),
     // OnLoad(OnLoadRequest),
+}
+
+#[derive(Debug)]
+pub enum RequestKind {
+    Build(oneshot::Sender<BuildResponse>),
 }
 
 #[derive(Debug, Clone)]
@@ -864,74 +984,17 @@ impl Decode for AnyPacket {
     }
 }
 
-// impl Decode for ProtocolPacket {
-//     fn decode_from(buf: &mut Buf) -> Result<Self, anyhow::Error> {
-//         let mut id = u32::decode_from(buf)?;
-//         let is_request = id & 1 == 0;
-//         id >>= 1;
-//         let value = if is_request {
-//             ProtocolMessage::Request(AnyRequest::decode_from(buf)?)
-//         } else {
-//             ProtocolMessage::Response(AnyResponse::decode_from(buf)?)
-//         };
-//         Ok(ProtocolPacket {
-//             id,
-//             is_request,
-//             value,
-//         })
-//     }
-// }
-
 impl AnyValue {
     pub fn to_type<T: FromAnyValue>(self) -> Result<T, anyhow::Error> {
         T::from_any_value(self)
     }
 }
 
-macro_rules! get {
-    ($self:expr, $key:expr) => {
-        $self
-            .get($key)
-            .ok_or_else(|| anyhow::anyhow!("Missing field: {}", $key))
-            .and_then(|v| v.clone().to_type())
-            .context(format!("on key: {}", $key))
-    };
-}
-
-// impl FromAnyValue for Hash
-
-// impl Decode for AnyRequest {
-//     fn decode_from(buf: &mut Buf) -> Result<Self, anyhow::Error> {
-//         eprintln!("decoding AnyRequest");
-//         let value = IndexMap::<String, AnyValue>::decode_from(buf)?;
-//         let command = value
-//             .get("command")
-//             .ok_or_else(|| anyhow::anyhow!("Missing command field"))?;
-//         match command.as_string().as_str() {
-//             "on-start" => {
-//                 let key = get!(value, "key")?;
-//                 Ok(AnyRequest::OnStart(OnStartRequest { key }))
-//             }
-//             cmd => Err(anyhow::anyhow!("Unknown command: {}", cmd)),
-//         }
-//     }
-// }
-
-// impl Decode for AnyResponse {
-//     fn decode_from(buf: &mut Buf) -> Result<Self, anyhow::Error> {
-//         todo!()
-//     }
-// }
-
 pub fn decode_any_packet(buf: &[u8]) -> Result<AnyPacket, anyhow::Error> {
     let mut buf = Buf::new(buf);
     AnyPacket::decode_from(&mut buf)
 }
 
-// pub fn decode_protocol_packet(buf: &[u8]) -> Result<ProtocolPacket, anyhow::Error> {
-//     let mut buf = Buf::new(buf);
-//     ProtocolPacket::decode_from(&mut buf)
-// }
 pub trait FromMap: Sized {
     fn from_map(map: &IndexMap<String, AnyValue>) -> Result<Self, anyhow::Error>;
 }
@@ -940,54 +1003,5 @@ impl FromMap for OnStartRequest {
     fn from_map(map: &IndexMap<String, AnyValue>) -> Result<Self, anyhow::Error> {
         let key = get!(map, "key")?;
         Ok(OnStartRequest { key })
-    }
-}
-impl FromAnyValue for OnStartRequest {
-    fn from_any_value(value: AnyValue) -> Result<Self, anyhow::Error> {
-        let map = value.as_map()?;
-        let key = get!(map, "key")?;
-        Ok(OnStartRequest { key })
-    }
-}
-
-/*
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct OnResolveRequest {
-    // command: "on-resolve";
-    pub key: u32,
-    pub ids: Vec<u32>,
-    pub path: String,
-    pub importer: String,
-    pub namespace: String,
-    pub resolve_dir: String,
-    pub kind: ImportKind,
-    pub plugin_data: u32,
-    pub with: IndexMap<String, String>,
-}
-
- */
-impl FromMap for OnResolveRequest {
-    fn from_map(map: &IndexMap<String, AnyValue>) -> Result<Self, anyhow::Error> {
-        let key = get!(map, "key")?;
-        let ids = get!(map, "ids")?;
-        let path = get!(map, "path")?;
-        let importer = get!(map, "importer")?;
-        let namespace = get!(map, "namespace")?;
-        let resolve_dir = get!(map, "resolveDir")?;
-        let plugin_data = get!(map, "pluginData")?;
-        let with = get!(map, "with")?;
-        let kind = get!(map, "kind")?;
-        Ok(OnResolveRequest {
-            key,
-            ids,
-            path,
-            importer,
-            namespace,
-            resolve_dir,
-            kind,
-            plugin_data,
-            with,
-        })
     }
 }

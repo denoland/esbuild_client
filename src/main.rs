@@ -1,9 +1,22 @@
 #![allow(dead_code)]
-use std::{path::Path, process::Stdio};
+use std::{
+    collections::HashMap,
+    ops::Deref,
+    path::Path,
+    process::Stdio,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+};
 
 pub use anyhow::Error as AnyError;
+use async_trait::async_trait;
 use indexmap::IndexMap;
-use protocol::{AnyPacket, AnyValue, Encode, FromMap, ImportKind, OnStartResponse, ProtocolPacket};
+use parking_lot::Mutex;
+use protocol::{
+    AnyPacket, Encode, FromAnyValue, FromMap, ImportKind, OnStartResponse, ProtocolPacket,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::{ChildStdin, ChildStdout},
@@ -75,12 +88,12 @@ async fn handle_read(amount: usize, state: &mut ProtocolState) {
             // eprintln!("first packet");
             state.first_packet = false;
             let version = String::from_utf8(message.to_vec()).unwrap();
-            eprintln!("version: {}", version);
+            // eprintln!("version: {}", version);
             state.ready_tx.take().unwrap().send(()).unwrap();
         } else {
             match protocol::decode_any_packet(message) {
                 Ok(packet) => {
-                    eprintln!("decoded packet: {packet:?}");
+                    // eprintln!("decoded packet: {packet:?}");
                     state.packet_tx.send(packet).await.unwrap()
                 }
                 Err(e) => eprintln!("Error decoding packet: {}", e),
@@ -107,12 +120,12 @@ async fn protocol_task(
         tokio::select! {
             res = response_rx.recv() => {
                 let packet: protocol::ProtocolPacket = res.unwrap();
-                eprintln!("got send packet from receiver: {packet:?}");
+                // eprintln!("got send packet from receiver: {packet:?}");
                 let mut encoded = Vec::new();
                 packet.encode_into(&mut encoded);
                 // eprintln!("encoded: {:?}", encoded);
                 stdin.write_all(&encoded).await?;
-                eprintln!("wrote packet");
+                // eprintln!("wrote packet");
             }
             read_length = stdout.read(&mut state.buffer[state.read_into_offset..]) => {
                 let Ok(read_length) = read_length else {
@@ -176,37 +189,58 @@ impl EsbuildService {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct OnResolveArgs {
-    path: String,
-    importer: Option<String>,
-    kind: ImportKind,
-    namespace: Option<String>,
-    resolve_dir: Option<String>,
-    with: IndexMap<String, AnyValue>,
+    pub key: u32,
+    pub ids: Vec<u32>,
+    pub path: String,
+    pub importer: Option<String>,
+    pub kind: ImportKind,
+    pub namespace: Option<String>,
+    pub resolve_dir: Option<String>,
+    pub with: IndexMap<String, String>,
 }
 
+#[derive(Debug)]
 pub struct OnResolveResult {
-    path: String,
-    namespace: Option<String>,
+    pub plugin_name: Option<String>,
+    pub errors: Option<Vec<protocol::PartialMessage>>,
+    pub warnings: Option<Vec<protocol::PartialMessage>>,
+    pub path: Option<String>,
+    pub external: Option<bool>,
+    pub side_effects: Option<bool>,
+    pub namespace: Option<String>,
+    pub suffix: Option<String>,
+    pub plugin_data: Option<u32>,
+    pub watch_files: Option<Vec<String>>,
+    pub watch_dirs: Option<Vec<String>>,
 }
 
-pub trait PluginInfo {
-    fn name(&self) -> &'static str;
-    fn provides_on_resolve(&self) -> bool {
-        false
-    }
-}
+// pub trait PluginInfo {
+//     fn name(&self) -> &'static str;
+//     fn provides_on_resolve(&self) -> bool {
+//         false
+//     }
+// }
 
-pub trait Plugin: PluginInfo {
-    fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError> {
-        anyhow::bail!("not implemented")
-    }
-    // fn on_load(&self)
+// pub trait Plugin: PluginInfo {
+//     fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError> {
+//         anyhow::bail!("not implemented")
+//     }
+//     // fn on_load(&self)
+// }
+
+#[async_trait]
+pub trait PluginHandler: Send + Sync {
+    async fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError>;
+    // async fn on_loa
 }
 
 async fn handle_packet(
     packet: AnyPacket,
     response_tx: &mpsc::Sender<protocol::ProtocolPacket>,
+    plugin_handler: Arc<dyn PluginHandler>,
+    pending: &Mutex<PendingResponseMap>,
 ) -> Result<(), AnyError> {
     match &packet.value {
         protocol::AnyValue::Map(index_map) => {
@@ -215,7 +249,7 @@ async fn handle_packet(
                     Some(Ok(s)) => match s.as_str() {
                         "on-start" => {
                             let on_start = protocol::OnStartRequest::from_map(index_map)?;
-                            eprintln!("on-start: {:?}", on_start);
+                            // eprintln!("on-start: {:?}", on_start);
                             response_tx
                                 .send(protocol::ProtocolPacket {
                                     id: packet.id,
@@ -231,16 +265,86 @@ async fn handle_packet(
                             Ok(())
                         }
                         "on-resolve" => {
-                            eprintln!("got on resolve");
+                            // eprintln!("got on resolve");
                             let on_resolve = protocol::OnResolveRequest::from_map(index_map)?;
-                            eprintln!("on-resolve: {:?}", on_resolve);
-                            return Ok(());
 
-                            // response_tx
-                            //     .send(protocol::ProtocolPacket {
-                            //         id: packet.id,
-                            //         is_request: false,
-                            //     })
+                            fn empty_none(s: String) -> Option<String> {
+                                if s.is_empty() { None } else { Some(s) }
+                            }
+
+                            let id = packet.id;
+                            // eprintln!("on-resolve: {:?}", on_resolve);
+                            let response_tx = response_tx.clone();
+                            tokio::spawn(async move {
+                                let result = plugin_handler
+                                    .on_resolve(OnResolveArgs {
+                                        key: on_resolve.key,
+                                        ids: on_resolve.ids,
+                                        path: on_resolve.path,
+                                        importer: empty_none(on_resolve.importer),
+                                        kind: on_resolve.kind,
+                                        namespace: empty_none(on_resolve.namespace),
+                                        resolve_dir: on_resolve.resolve_dir,
+                                        with: on_resolve.with,
+                                    })
+                                    .await;
+                                match result {
+                                    Ok(Some(on_resolve_result)) => {
+                                        // eprintln!("on-resolve result: {:?}", on_resolve_result);
+                                        let response = protocol::OnResolveResponse {
+                                            id: Some(id),
+                                            plugin_name: on_resolve_result.plugin_name,
+                                            errors: None,
+                                            warnings: None,
+                                            path: on_resolve_result.path,
+                                            external: on_resolve_result.external,
+                                            side_effects: on_resolve_result.side_effects,
+                                            namespace: on_resolve_result.namespace,
+                                            suffix: on_resolve_result.suffix,
+                                            plugin_data: on_resolve_result.plugin_data,
+                                            watch_files: on_resolve_result.watch_files,
+                                            watch_dirs: on_resolve_result.watch_dirs,
+                                        };
+                                        let _ = response_tx
+                                            .send(protocol::ProtocolPacket {
+                                                id,
+                                                is_request: false,
+                                                value: protocol::ProtocolMessage::Response(
+                                                    protocol::AnyResponse::OnResolve(response),
+                                                ),
+                                            })
+                                            .await;
+                                    }
+                                    Ok(None) => {
+                                        let response = protocol::OnResolveResponse {
+                                            id: Some(id),
+                                            plugin_name: None,
+                                            errors: None,
+                                            warnings: None,
+                                            path: None,
+                                            external: None,
+                                            side_effects: None,
+                                            namespace: None,
+                                            suffix: None,
+                                            plugin_data: None,
+                                            watch_files: None,
+                                            watch_dirs: None,
+                                        };
+                                        let _ = response_tx
+                                            .send(protocol::ProtocolPacket {
+                                                id,
+                                                is_request: false,
+                                                value: protocol::ProtocolMessage::Response(
+                                                    protocol::AnyResponse::OnResolve(response),
+                                                ),
+                                            })
+                                            .await;
+                                    }
+                                    Err(e) => eprintln!("Error on-resolve: {}", e),
+                                }
+                            });
+
+                            return Ok(());
                         }
                         _ => {
                             todo!("handle: {:?}", packet.value)
@@ -251,7 +355,17 @@ async fn handle_packet(
                     }
                 }
             } else {
-                todo!("handle: {:?}", packet.value)
+                let req_id = packet.id;
+                let kind = pending.lock().remove(&req_id).unwrap();
+                match kind {
+                    protocol::RequestKind::Build(tx) => {
+                        let build_response =
+                            protocol::BuildResponse::from_any_value(packet.value.clone())?;
+                        let _ = tx.send(build_response);
+                    }
+                }
+
+                Ok(())
             }
         }
         _ => {
@@ -260,12 +374,79 @@ async fn handle_packet(
     }
 }
 
+struct Handler;
+
+#[async_trait]
+impl PluginHandler for Handler {
+    async fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError> {
+        eprintln!("on-resolve: {:?}", _args);
+        Ok(None)
+        // todo!()
+    }
+}
+
+type PendingResponseMap = HashMap<u32, protocol::RequestKind>;
+
+pub struct ProtocolClientInner {
+    response_tx: mpsc::Sender<protocol::ProtocolPacket>,
+    id: AtomicU32,
+    pending: Arc<Mutex<PendingResponseMap>>,
+}
+
+pub struct ProtocolClient(Arc<ProtocolClientInner>);
+
+impl ProtocolClient {
+    pub fn new(response_tx: mpsc::Sender<protocol::ProtocolPacket>) -> Self {
+        Self(Arc::new(ProtocolClientInner::new(response_tx)))
+    }
+}
+
+impl Deref for ProtocolClient {
+    type Target = ProtocolClientInner;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl ProtocolClientInner {
+    fn new(response_tx: mpsc::Sender<protocol::ProtocolPacket>) -> Self {
+        Self {
+            response_tx,
+            id: AtomicU32::new(0),
+            pending: Default::default(),
+        }
+    }
+
+    pub async fn send_build_request(
+        &self,
+        req: protocol::BuildRequest,
+    ) -> Result<protocol::BuildResponse, AnyError> {
+        let id = self.id.fetch_add(1, Ordering::Relaxed);
+        let packet = protocol::ProtocolPacket {
+            id,
+            is_request: true,
+            value: protocol::ProtocolMessage::Request(protocol::AnyRequest::Build(req)),
+        };
+        let (tx, rx) = oneshot::channel();
+        self.pending
+            .lock()
+            .insert(id, protocol::RequestKind::Build(tx));
+        self.response_tx.send(packet).await?;
+        let response = rx.await?;
+        Ok(response)
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let path = "/Users/nathanwhit/Library/Caches/esbuild/bin/@esbuild-darwin-arm64@0.25.4";
     let path = Path::new(&path);
 
+    let plugin_handler = Arc::new(Handler);
     let (mut esbuild, packet_rx, response_tx) = EsbuildService::new(path, "0.25.4").await.unwrap();
+
+    let client = ProtocolClient::new(response_tx.clone());
+    let pending = client.0.pending.clone();
 
     {
         let response_tx = response_tx.clone();
@@ -275,13 +456,13 @@ async fn main() {
                 tokio::select! {
                     res = esbuild.esbuild.wait() => {
                         eprintln!("esbuild exited: {:?}", res);
-                        std::process::exit(res.unwrap().code().unwrap_or(1));
+                        break;
                     }
                     packet = packet_rx.recv() => {
-                        eprintln!("got packet from receiver: {packet:?}");
+                        // eprintln!("got packet from receiver: {packet:?}");
 
                         if let Some(packet) = packet {
-                            let _ = handle_packet(packet, &response_tx).await.inspect_err(
+                            let _ = handle_packet(packet, &response_tx, plugin_handler.clone(), &pending).await.inspect_err(
                                 |err| {
                                     eprintln!("failed to handle packet {err}");
                                 }
@@ -291,77 +472,50 @@ async fn main() {
                 }
             }
 
-            #[allow(unreachable_code)]
             Ok::<(), AnyError>(())
         });
     }
 
-    let req = protocol::BuildRequest {
-        entries: vec![("".into(), "./testing.ts".into())],
-        key: 0,
-        flags: vec![
-            "--color=true".into(),
-            "--log-level=warning".into(),
-            "--log-limit=0".into(),
-            "--format=esm".into(),
-            "--platform=node".into(),
-            "--tree-shaking=true".into(),
-            "--bundle".into(),
-            "--outfile=./temp/mod.js".into(),
-            "--packages=bundle".into(),
-        ],
-        write: true,
-        stdin_contents: None,
-        stdin_resolve_dir: None,
-        abs_working_dir: "/Users/nathanwhit/Documents/Code/esbuild-at-home".into(),
-        context: false,
-        mangle_cache: None,
-        node_paths: vec![],
-        plugins: Some(vec![
-            protocol::BuildPlugin {
-                name: "deno".into(),
-                on_start: false,
-                on_end: false,
-                on_resolve: (vec![protocol::OnResolveSetupOptions {
-                    id: 0,
-                    filter: ".*".into(),
-                    namespace: "".into(),
-                }]),
-                on_load: (vec![protocol::OnLoadSetupOptions {
-                    id: 0,
-                    filter: ".*".into(),
-                    namespace: "".into(),
-                }]),
-            },
-            protocol::BuildPlugin {
+    let response = client
+        .send_build_request(protocol::BuildRequest {
+            entries: vec![("".into(), "./tools/common.ts".into())],
+            key: 0,
+            flags: vec![
+                "--color=true".into(),
+                "--log-level=warning".into(),
+                "--log-limit=0".into(),
+                "--format=esm".into(),
+                "--platform=node".into(),
+                "--tree-shaking=true".into(),
+                "--bundle".into(),
+                "--outfile=./temp/mod.js".into(),
+                "--packages=bundle".into(),
+            ],
+            write: true,
+            stdin_contents: None.into(),
+            stdin_resolve_dir: None.into(),
+            abs_working_dir: "/Users/nathanwhit/Documents/Code/esbuild_rs".into(),
+            context: false,
+            mangle_cache: None.into(),
+            node_paths: vec![],
+            plugins: Some(vec![protocol::BuildPlugin {
                 name: "test".into(),
                 on_start: false,
                 on_end: false,
                 on_resolve: (vec![protocol::OnResolveSetupOptions {
-                    id: 1,
+                    id: 0,
                     filter: ".*".into(),
                     namespace: "".into(),
                 }]),
-                on_load: (vec![protocol::OnLoadSetupOptions {
-                    id: 2,
-                    filter: ".*".into(),
-                    namespace: "".into(),
-                }]),
-            },
-        ]),
-    };
+                on_load: vec![],
+            }]),
+        })
+        .await
+        .unwrap();
 
-    let id = 0;
-    let packet = protocol::ProtocolPacket {
-        id,
-        is_request: true,
-        value: protocol::ProtocolMessage::Request(protocol::AnyRequest::Build(req)),
-    };
-    response_tx.send(packet).await.unwrap();
-    eprintln!("sending packet");
+    eprintln!("build response: {:?}", response);
 
-    eprintln!("sent packet");
-    std::future::pending::<()>().await;
+    // std::future::pending::<()>().await;
     // tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 }
 
@@ -380,6 +534,7 @@ mod test {
         .unwrap();
         let mut buf = Vec::new();
         input.encode_into(&mut buf);
+        eprintln!("buf: {:?}", buf);
         assert_eq!(
             buf,
             vec![

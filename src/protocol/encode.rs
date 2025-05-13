@@ -23,13 +23,34 @@ macro_rules! count_idents {
   };
 }
 
+pub fn snake_to_camel(s: &str) -> String {
+    let mut result = String::new();
+    let mut capitalize = false;
+
+    for c in s.chars() {
+        if c == '_' {
+            capitalize = true;
+        } else {
+            if capitalize {
+                result.push(c.to_ascii_uppercase());
+                capitalize = false;
+            } else {
+                result.push(c);
+            }
+        }
+    }
+    result
+}
+
 #[macro_export]
 macro_rules! delegate {
   ($buf: ident, $self: ident; $($field: ident),*) => {
     $(
         paste::paste! {
-            encode_key($buf, stringify!([<$field:camel:lower>]));
-            $self.$field.encode_into($buf);
+            if $self.$field.should_encode() {
+                encode_key($buf, &$crate::protocol::encode::snake_to_camel(stringify!($field)));
+                $self.$field.encode_into($buf);
+            }
         }
     )*
   };
@@ -43,7 +64,10 @@ macro_rules! impl_encode_command {
     impl Encode for $name {
       fn encode_into(&self, buf: &mut Vec<u8>) {
         buf.push(6); // discrim
-        encode_u32_raw(buf, 1 + $crate::count_idents!($($field),*)); // num fields
+        let dont_count = {
+            $(!self.$field.should_encode() as u32 +)* 0
+        };
+        encode_u32_raw(buf, 1 + $crate::count_idents!($($field),*) - dont_count); // num fields
         encode_key(buf, "command");
         $command_name.encode_into(buf);
         $crate::delegate!(buf, self; $($field),*);
@@ -54,13 +78,16 @@ macro_rules! impl_encode_command {
 
 #[macro_export]
 macro_rules! impl_encode_struct {
-  (for $name: ident {
+  (for $name: ty {
     $($field: ident),*
   }) => {
     impl Encode for $name {
       fn encode_into(&self, buf: &mut Vec<u8>) {
         buf.push(6); // discrim
-        encode_u32_raw(buf, $crate::count_idents!($($field),*)); // num fields
+        let dont_count = {
+            $(!self.$field.should_encode() as u32 +)* 0
+        };
+        encode_u32_raw(buf, $crate::count_idents!($($field),*) - dont_count); // num fields
         $crate::delegate!(buf, self; $($field),*);
       }
     }
@@ -69,6 +96,10 @@ macro_rules! impl_encode_struct {
 
 pub trait Encode {
     fn encode_into(&self, buf: &mut Vec<u8>);
+
+    fn should_encode(&self) -> bool {
+        true
+    }
 }
 
 pub fn encode_length_delimited(buf: &mut Vec<u8>, value: &[u8]) {
@@ -80,6 +111,15 @@ pub fn encode_key(buf: &mut Vec<u8>, key: &str) {
     encode_length_delimited(buf, key.as_bytes());
 }
 
+impl<T: Encode> Encode for super::OptionNull<T> {
+    fn encode_into(&self, buf: &mut Vec<u8>) {
+        self.0.encode_into(buf);
+    }
+    fn should_encode(&self) -> bool {
+        true
+    }
+}
+
 impl<T: Encode> Encode for Option<T> {
     fn encode_into(&self, buf: &mut Vec<u8>) {
         if let Some(value) = self {
@@ -87,6 +127,10 @@ impl<T: Encode> Encode for Option<T> {
         } else {
             buf.push(0);
         }
+    }
+
+    fn should_encode(&self) -> bool {
+        self.is_some()
     }
 }
 
@@ -210,7 +254,7 @@ impl Encode for AnyResponse {
             AnyResponse::AnalyzeMetafile(analyze_metafile_response) => todo!(),
             AnyResponse::OnStart(on_start_response) => on_start_response.encode_into(buf),
             AnyResponse::Resolve(resolve_response) => todo!(),
-            AnyResponse::OnResolve(on_resolve_response) => todo!(),
+            AnyResponse::OnResolve(on_resolve_response) => on_resolve_response.encode_into(buf),
             AnyResponse::OnLoad(on_load_response) => todo!(),
         }
     }
@@ -248,41 +292,10 @@ impl<T: Encode> Encode for Packet<T> {
     }
 }
 
-impl Encode for BuildRequest {
-    fn encode_into(&self, buf: &mut Vec<u8>) {
-        buf.push(6);
-        encode_u32_raw(
-            buf,
-            1 + 11 - if self.mangle_cache.is_none() { 1 } else { 0 },
-        );
-        encode_key(buf, "command");
-        "build".encode_into(buf);
-        encode_key(buf, "key");
-        self.key.encode_into(buf);
-        encode_key(buf, "entries");
-        self.entries.encode_into(buf);
-        encode_key(buf, "flags");
-        self.flags.encode_into(buf);
-        encode_key(buf, "write");
-        self.write.encode_into(buf);
-        encode_key(buf, "stdinContents");
-        self.stdin_contents.encode_into(buf);
-        encode_key(buf, "stdinResolveDir");
-        self.stdin_resolve_dir.encode_into(buf);
-        encode_key(buf, "absWorkingDir");
-        self.abs_working_dir.encode_into(buf);
-        encode_key(buf, "nodePaths");
-        self.node_paths.encode_into(buf);
-        encode_key(buf, "context");
-        self.context.encode_into(buf);
-        encode_key(buf, "plugins");
-        self.plugins.encode_into(buf);
-        if let Some(mangle_cache) = &self.mangle_cache {
-            encode_key(buf, "mangleCache");
-            mangle_cache.encode_into(buf);
-        }
-    }
-}
+impl_encode_command!(for BuildRequest {
+  const Command = "build";
+  key, entries, flags, write, stdin_contents, stdin_resolve_dir, abs_working_dir, node_paths, context, plugins, mangle_cache
+});
 
 impl Encode for ImportKind {
     fn encode_into(&self, buf: &mut Vec<u8>) {
@@ -305,8 +318,8 @@ impl Encode for MangleCacheEntry {
             MangleCacheEntry::StringValue(s) => {
                 s.encode_into(buf);
             }
-            MangleCacheEntry::FalseValue => {
-                false.encode_into(buf);
+            MangleCacheEntry::BoolValue(b) => {
+                b.encode_into(buf);
             }
         }
     }
