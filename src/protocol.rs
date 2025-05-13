@@ -54,13 +54,6 @@ macro_rules! protocol_impls {
     };
 }
 
-macro_rules! command_protocol_impls {
-    (for $t: ty { const Command = $command: literal; $( $(#[$optional:ident])? $field: ident),* }) => {
-        impl_from_map!(for $t { $( $(#[$optional])? $field),* });
-        impl_encode_command!(for $t { const Command = $command; $($field),* });
-    };
-}
-
 pub(crate) use impl_from_map;
 
 #[derive(Debug, thiserror::Error, serde::Deserialize, Clone)]

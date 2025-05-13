@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
     ops::Deref,
     path::Path,
-    process::Stdio,
+    process::{ExitStatus, Stdio},
     sync::{
         Arc,
         atomic::{AtomicU32, Ordering},
@@ -20,13 +20,29 @@ use protocol::{
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::{ChildStdin, ChildStdout},
-    sync::{mpsc, oneshot},
+    sync::{mpsc, oneshot, watch},
 };
 mod protocol;
-
 pub struct EsbuildService {
-    esbuild: tokio::process::Child,
-    // channel: EsbuildChannel,
+    exited: watch::Receiver<Option<ExitStatus>>,
+    client: ProtocolClient,
+}
+
+impl EsbuildService {
+    pub fn client(&self) -> &ProtocolClient {
+        &self.client
+    }
+
+    pub async fn wait_for_exit(&self) -> Result<ExitStatus, AnyError> {
+        if self.exited.borrow().is_some() {
+            return Ok(self.exited.borrow().unwrap());
+        }
+        let mut exited = self.exited.clone();
+
+        let _ = exited.changed().await;
+        let status = exited.borrow().unwrap();
+        Ok(status)
+    }
 }
 
 // fn handle_packet(is_first_packet: bool, packet: &[u8]) {
@@ -88,7 +104,7 @@ async fn handle_read(amount: usize, state: &mut ProtocolState) {
             // eprintln!("first packet");
             state.first_packet = false;
             let version = String::from_utf8(message.to_vec()).unwrap();
-            // eprintln!("version: {}", version);
+            eprintln!("version: {}", version);
             state.ready_tx.take().unwrap().send(()).unwrap();
         } else {
             match protocol::decode_any_packet(message) {
@@ -153,14 +169,8 @@ impl EsbuildService {
     pub async fn new(
         path: impl AsRef<Path>,
         version: &str,
-    ) -> Result<
-        (
-            Self,
-            mpsc::Receiver<AnyPacket>,
-            mpsc::Sender<protocol::ProtocolPacket>,
-        ),
-        AnyError,
-    > {
+        plugin_handler: Arc<dyn PluginHandler>,
+    ) -> Result<Self, AnyError> {
         let path = path.as_ref();
         let mut esbuild = tokio::process::Command::new(path)
             .arg(&format!("--service={}", version))
@@ -173,8 +183,9 @@ impl EsbuildService {
         let stdout = esbuild.stdout.take().unwrap();
 
         let (ready_tx, ready_rx) = oneshot::channel();
-        let (packet_tx, packet_rx) = mpsc::channel(100);
+        let (packet_tx, mut packet_rx) = mpsc::channel(100);
         let (response_tx, response_rx) = mpsc::channel(100);
+        let (exited_tx, exited_rx) = watch::channel(None);
         tokio::spawn(protocol_task(
             stdout,
             stdin,
@@ -183,9 +194,35 @@ impl EsbuildService {
             packet_tx,
         ));
 
+        tokio::spawn(async move {
+            let status = esbuild.wait().await.unwrap();
+            let _ = exited_tx.send(Some(status));
+        });
+
+        let client = ProtocolClient::new(response_tx.clone());
+        let pending = client.0.pending.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let packet = packet_rx.recv().await;
+                // eprintln!("got packet from receiver: {packet:?}");
+
+                if let Some(packet) = packet {
+                    let _ = handle_packet(packet, &response_tx, plugin_handler.clone(), &pending)
+                        .await
+                        .inspect_err(|err| {
+                            eprintln!("failed to handle packet {err}");
+                        });
+                }
+            }
+        });
+
         let _ = ready_rx.await;
 
-        Ok((Self { esbuild }, packet_rx, response_tx))
+        Ok(Self {
+            exited: exited_rx,
+            client,
+        })
     }
 }
 
@@ -249,7 +286,7 @@ async fn handle_packet(
                     Some(Ok(s)) => match s.as_str() {
                         "on-start" => {
                             let on_start = protocol::OnStartRequest::from_map(index_map)?;
-                            // eprintln!("on-start: {:?}", on_start);
+                            eprintln!("on-start: {:?}", on_start);
                             response_tx
                                 .send(protocol::ProtocolPacket {
                                     id: packet.id,
@@ -393,6 +430,7 @@ pub struct ProtocolClientInner {
     pending: Arc<Mutex<PendingResponseMap>>,
 }
 
+#[derive(Clone)]
 pub struct ProtocolClient(Arc<ProtocolClientInner>);
 
 impl ProtocolClient {
@@ -443,31 +481,18 @@ async fn main() {
     let path = Path::new(&path);
 
     let plugin_handler = Arc::new(Handler);
-    let (mut esbuild, packet_rx, response_tx) = EsbuildService::new(path, "0.25.4").await.unwrap();
-
-    let client = ProtocolClient::new(response_tx.clone());
-    let pending = client.0.pending.clone();
+    let esbuild = EsbuildService::new(path, "0.25.4", plugin_handler.clone())
+        .await
+        .unwrap();
+    let client = esbuild.client().clone();
 
     {
-        let response_tx = response_tx.clone();
         tokio::spawn(async move {
-            let mut packet_rx = packet_rx;
             loop {
                 tokio::select! {
-                    res = esbuild.esbuild.wait() => {
+                    res = esbuild.wait_for_exit() => {
                         eprintln!("esbuild exited: {:?}", res);
                         break;
-                    }
-                    packet = packet_rx.recv() => {
-                        // eprintln!("got packet from receiver: {packet:?}");
-
-                        if let Some(packet) = packet {
-                            let _ = handle_packet(packet, &response_tx, plugin_handler.clone(), &pending).await.inspect_err(
-                                |err| {
-                                    eprintln!("failed to handle packet {err}");
-                                }
-                            );
-                        }
                     }
                 }
             }
