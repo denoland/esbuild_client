@@ -15,7 +15,8 @@ use async_trait::async_trait;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use protocol::{
-    AnyPacket, Encode, FromAnyValue, FromMap, ImportKind, OnStartResponse, ProtocolPacket,
+    AnyPacket, Encode, FromAnyValue, FromMap, ImportKind, OnStartResponse, PartialMessage,
+    ProtocolPacket,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -104,8 +105,8 @@ async fn handle_read(amount: usize, state: &mut ProtocolState) {
         if state.first_packet {
             // eprintln!("first packet");
             state.first_packet = false;
-            let version = String::from_utf8(message.to_vec()).unwrap();
-            eprintln!("version: {}", version);
+            // let version = String::from_utf8(message.to_vec()).unwrap();
+            // eprintln!("version: {}", version);
             state.ready_tx.take().unwrap().send(()).unwrap();
         } else {
             match protocol::decode_any_packet(message) {
@@ -296,7 +297,31 @@ pub struct OnResolveResult {
 #[async_trait]
 pub trait PluginHandler: Send + Sync {
     async fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError>;
-    // async fn on_loa
+    async fn on_load(&self, _args: OnLoadArgs) -> Result<Option<OnLoadResult>, AnyError>;
+}
+
+pub struct OnLoadResult {
+    pub id: Option<u32>,
+    pub plugin_name: Option<String>,
+    pub errors: Option<Vec<PartialMessage>>,
+    pub warnings: Option<Vec<PartialMessage>>,
+    pub contents: Option<Vec<u8>>,
+    pub resolve_dir: Option<String>,
+    pub loader: Option<BuiltinLoader>,
+    pub plugin_data: Option<u32>,
+    pub watch_files: Option<Vec<String>>,
+    pub watch_dirs: Option<Vec<String>>,
+}
+
+#[derive(Debug)]
+pub struct OnLoadArgs {
+    pub key: u32,
+    pub ids: Vec<u32>,
+    pub path: String,
+    pub namespace: String,
+    pub suffix: String,
+    pub plugin_data: Option<u32>,
+    pub with: IndexMap<String, String>,
 }
 
 async fn handle_packet(
@@ -407,6 +432,77 @@ async fn handle_packet(
                                 }
                             });
 
+                            return Ok(());
+                        }
+                        "on-load" => {
+                            let on_load = protocol::OnLoadRequest::from_map(index_map)?;
+                            let response_tx = response_tx.clone();
+
+                            let id = packet.id;
+                            tokio::spawn(async move {
+                                let result = plugin_handler
+                                    .on_load(OnLoadArgs {
+                                        key: on_load.key,
+                                        path: on_load.path,
+                                        ids: on_load.ids,
+                                        namespace: on_load.namespace,
+                                        suffix: on_load.suffix,
+                                        plugin_data: on_load.plugin_data,
+                                        with: on_load.with,
+                                    })
+                                    .await;
+                                match result {
+                                    Ok(Some(on_load_result)) => {
+                                        let response = protocol::OnLoadResponse {
+                                            id: on_load_result.id,
+                                            plugin_name: on_load_result.plugin_name,
+                                            errors: on_load_result.errors,
+                                            warnings: on_load_result.warnings,
+                                            contents: on_load_result.contents,
+                                            resolve_dir: on_load_result.resolve_dir,
+                                            loader: on_load_result
+                                                .loader
+                                                .map(|loader| loader.to_string()),
+                                            plugin_data: on_load_result.plugin_data,
+                                            watch_files: on_load_result.watch_files,
+                                            watch_dirs: on_load_result.watch_dirs,
+                                        };
+                                        let _ = response_tx
+                                            .send(protocol::ProtocolPacket {
+                                                id,
+                                                is_request: false,
+                                                value: protocol::ProtocolMessage::Response(
+                                                    protocol::AnyResponse::OnLoad(response),
+                                                ),
+                                            })
+                                            .await;
+                                    }
+                                    Ok(None) => {
+                                        let response = protocol::OnLoadResponse {
+                                            id: None,
+                                            plugin_name: None,
+                                            errors: None,
+                                            warnings: None,
+                                            contents: None,
+                                            resolve_dir: None,
+                                            loader: None,
+                                            plugin_data: None,
+                                            watch_files: None,
+                                            watch_dirs: None,
+                                        };
+                                        let _ = response_tx
+                                            .send(protocol::ProtocolPacket {
+                                                id,
+                                                is_request: false,
+                                                value: protocol::ProtocolMessage::Response(
+                                                    protocol::AnyResponse::OnLoad(response),
+                                                ),
+                                            })
+                                            .await;
+                                    }
+                                    Err(e) => eprintln!("Error on-load: {}", e),
+                                }
+                            });
                             return Ok(());
                         }
                         _ => {

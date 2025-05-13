@@ -763,9 +763,13 @@ pub struct OnLoadRequest {
     pub path: String,
     pub namespace: String,
     pub suffix: String,
-    pub plugin_data: u32,
+    pub plugin_data: Option<u32>,
     pub with: IndexMap<String, String>,
 }
+
+impl_from_map!(for OnLoadRequest {
+    key, ids, path, namespace, suffix, #[optional] plugin_data, with
+});
 
 impl_encode_command!(for OnLoadRequest {
   const Command = "on-load";
@@ -786,6 +790,19 @@ pub struct OnLoadResponse {
     pub watch_files: Option<Vec<String>>,
     pub watch_dirs: Option<Vec<String>>,
 }
+
+impl_encode_struct!(for OnLoadResponse {
+    id,
+    plugin_name,
+    errors,
+    warnings,
+    contents,
+    resolve_dir,
+    loader,
+    plugin_data,
+    watch_files,
+    watch_dirs
+});
 
 #[derive(Debug, Clone)]
 pub enum AnyRequest {

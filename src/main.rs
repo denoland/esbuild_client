@@ -1,4 +1,6 @@
-use esbuild_rs::{EsbuildFlagsBuilder, OnResolveArgs, OnResolveResult, protocol};
+use esbuild_rs::{
+    EsbuildFlagsBuilder, OnLoadArgs, OnLoadResult, OnResolveArgs, OnResolveResult, protocol,
+};
 use std::{path::Path, sync::Arc};
 
 use anyhow::Error as AnyError;
@@ -13,6 +15,10 @@ impl PluginHandler for Handler {
         eprintln!("on-resolve: {:?}", _args);
         Ok(None)
         // todo!()
+    }
+
+    async fn on_load(&self, _args: OnLoadArgs) -> Result<Option<OnLoadResult>, AnyError> {
+        Ok(None)
     }
 }
 
@@ -68,7 +74,11 @@ async fn main() {
                     filter: ".*".into(),
                     namespace: "".into(),
                 }]),
-                on_load: vec![],
+                on_load: vec![protocol::OnLoadSetupOptions {
+                    id: 0,
+                    filter: ".*".into(),
+                    namespace: "".into(),
+                }],
             }]),
         })
         .await

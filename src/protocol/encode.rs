@@ -255,7 +255,7 @@ impl Encode for AnyResponse {
             AnyResponse::OnStart(on_start_response) => on_start_response.encode_into(buf),
             AnyResponse::Resolve(resolve_response) => todo!(),
             AnyResponse::OnResolve(on_resolve_response) => on_resolve_response.encode_into(buf),
-            AnyResponse::OnLoad(on_load_response) => todo!(),
+            AnyResponse::OnLoad(on_load_response) => on_load_response.encode_into(buf),
         }
     }
 }
