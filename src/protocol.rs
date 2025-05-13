@@ -107,10 +107,6 @@ impl<'a> Buf<'a> {
         self.idx += 4;
         value
     }
-
-    fn decode<T: Decode>(&mut self) -> Result<T, anyhow::Error> {
-        T::decode_from(self)
-    }
 }
 
 pub trait FromAnyValue: Sized {
@@ -228,7 +224,6 @@ pub struct BuildRequest {
     pub mangle_cache: Option<IndexMap<String, MangleCacheEntry>>,
 }
 
-// Placeholder types - replace with actual definitions as needed
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
@@ -237,10 +232,11 @@ pub struct Message {
     text: String,
     location: Option<Location>,
     notes: Vec<Note>,
+    detail: Option<AnyValue>,
     // detail: any
 }
 
-protocol_impls!(for Message { id, plugin_name, text, #[optional] location, notes });
+protocol_impls!(for Message { id, plugin_name, text, #[optional] location, notes, #[optional] detail });
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -690,6 +686,7 @@ pub struct OnResolveRequest {
     pub namespace: String,
     pub resolve_dir: Option<String>,
     pub kind: ImportKind,
+    #[allow(dead_code)]
     pub plugin_data: Option<u32>,
     pub with: IndexMap<String, String>,
 }
@@ -835,16 +832,6 @@ pub enum AnyResponse {
 pub enum ProtocolMessage {
     Request(AnyRequest),
     Response(AnyResponse),
-}
-
-pub struct EsbuildSerializer {
-    out: Vec<u8>,
-}
-
-impl EsbuildSerializer {
-    pub fn new() -> Self {
-        Self { out: Vec::new() }
-    }
 }
 
 #[derive(Debug, Clone)]
