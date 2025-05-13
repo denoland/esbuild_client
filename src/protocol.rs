@@ -1,5 +1,4 @@
 pub mod encode;
-pub mod serd;
 
 use anyhow::Context;
 use std::{
