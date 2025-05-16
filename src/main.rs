@@ -1,5 +1,6 @@
 use esbuild_rs::{
-    EsbuildFlagsBuilder, OnLoadArgs, OnLoadResult, OnResolveArgs, OnResolveResult, protocol,
+    EsbuildFlagsBuilder, OnLoadArgs, OnLoadResult, OnResolveArgs, OnResolveResult, OnStartArgs,
+    OnStartResult, protocol,
 };
 use std::{path::Path, sync::Arc};
 
@@ -20,6 +21,10 @@ impl PluginHandler for Handler {
 
     async fn on_load(&self, _args: OnLoadArgs) -> Result<Option<OnLoadResult>, AnyError> {
         Err(anyhow::anyhow!("error"))
+    }
+
+    async fn on_start(&self, _args: OnStartArgs) -> Result<Option<OnStartResult>, AnyError> {
+        Ok(None)
     }
 }
 

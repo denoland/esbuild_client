@@ -53,6 +53,19 @@ macro_rules! protocol_impls {
     };
 }
 
+macro_rules! enum_impl_from {
+    (for $t: ty { $( $variant:ident($field: ty)),*  $(,)? }) => {
+        $(
+            impl From<$field> for $t {
+                fn from(value: $field) -> Self {
+                    <$t>::$variant(value)
+                }
+            }
+
+        )*
+    };
+}
+
 pub(crate) use impl_from_map;
 
 #[derive(Debug, thiserror::Error, serde::Deserialize, Clone)]
@@ -370,22 +383,7 @@ pub struct BuildPlugin {
     pub on_load: Vec<OnLoadSetupOptions>,
 }
 
-impl Encode for BuildPlugin {
-    fn encode_into(&self, buf: &mut Vec<u8>) {
-        buf.push(6); // discrim
-        encode_u32_raw(buf, 5); // num fields
-        encode_key(buf, "name");
-        self.name.encode_into(buf);
-        encode_key(buf, "onStart");
-        self.on_start.encode_into(buf);
-        encode_key(buf, "onEnd");
-        self.on_end.encode_into(buf);
-        encode_key(buf, "onResolve");
-        self.on_resolve.encode_into(buf);
-        encode_key(buf, "onLoad");
-        self.on_load.encode_into(buf);
-    }
-}
+impl_encode_struct!(for BuildPlugin { name, on_start, on_end, on_resolve, on_load });
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -395,18 +393,7 @@ pub struct OnResolveSetupOptions {
     pub namespace: String,
 }
 
-impl Encode for OnResolveSetupOptions {
-    fn encode_into(&self, buf: &mut Vec<u8>) {
-        buf.push(6); // discrim
-        encode_u32_raw(buf, 3); // num fields
-        encode_key(buf, "id");
-        self.id.encode_into(buf);
-        encode_key(buf, "filter");
-        self.filter.encode_into(buf);
-        encode_key(buf, "namespace");
-        self.namespace.encode_into(buf);
-    }
-}
+impl_encode_struct!(for OnResolveSetupOptions { id, filter, namespace });
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -416,18 +403,7 @@ pub struct OnLoadSetupOptions {
     pub namespace: String,
 }
 
-impl Encode for OnLoadSetupOptions {
-    fn encode_into(&self, buf: &mut Vec<u8>) {
-        buf.push(6); // discrim
-        encode_u32_raw(buf, 3); // num fields
-        encode_key(buf, "id");
-        self.id.encode_into(buf);
-        encode_key(buf, "filter");
-        self.filter.encode_into(buf);
-        encode_key(buf, "namespace");
-        self.namespace.encode_into(buf);
-    }
-}
+impl_encode_struct!(for OnLoadSetupOptions { id, filter, namespace });
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -632,7 +608,7 @@ impl_encode_command!(for OnStartRequest {
   key
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
+#[derive(serde::Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct OnStartResponse {
     pub errors: Vec<PartialMessage>,
@@ -864,6 +840,20 @@ pub enum AnyResponse {
     OnResolve(OnResolveResponse),
     OnLoad(OnLoadResponse),
 }
+
+enum_impl_from!(for AnyResponse {
+    Build(BuildResponse),
+    Serve(ServeResponse),
+    OnEnd(OnEndResponse),
+    Rebuild(RebuildResponse),
+    Transform(TransformResponse),
+    FormatMsgs(FormatMsgsResponse),
+    AnalyzeMetafile(AnalyzeMetafileResponse),
+    OnStart(OnStartResponse),
+    Resolve(ResolveResponse),
+    OnResolve(OnResolveResponse),
+    OnLoad(OnLoadResponse),
+});
 
 #[derive(Debug, Clone)]
 pub enum ProtocolMessage {

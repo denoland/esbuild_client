@@ -15,8 +15,7 @@ use async_trait::async_trait;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use protocol::{
-    AnyPacket, Encode, FromAnyValue, FromMap, ImportKind, OnStartResponse, PartialMessage,
-    ProtocolPacket,
+    AnyPacket, AnyValue, Encode, FromAnyValue, FromMap, ImportKind, PartialMessage, ProtocolPacket,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -345,6 +344,13 @@ fn load_result_to_response(id: u32, result: Option<OnLoadResult>) -> protocol::O
 pub trait PluginHandler {
     async fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError>;
     async fn on_load(&self, _args: OnLoadArgs) -> Result<Option<OnLoadResult>, AnyError>;
+    async fn on_start(&self, _args: OnStartArgs) -> Result<Option<OnStartResult>, AnyError>;
+}
+
+#[derive(Default)]
+pub struct OnStartResult {
+    pub errors: Option<Vec<PartialMessage>>,
+    pub warnings: Option<Vec<PartialMessage>>,
 }
 
 #[derive(Default)]
@@ -392,6 +398,184 @@ pub struct OnLoadArgs {
     pub with: IndexMap<String, String>,
 }
 
+#[derive(Debug)]
+pub struct OnStartArgs {
+    pub key: u32,
+}
+
+trait PluginHook {
+    type Request: FromMap;
+    type Response: Into<protocol::AnyResponse>;
+    type Result;
+    type Args: From<Self::Request>;
+    fn call_handler(
+        plugin_handler: Arc<dyn PluginHandler>,
+        args: Self::Args,
+    ) -> impl Future<Output = Result<Option<Self::Result>, AnyError>>;
+
+    fn response_from_result(
+        id: u32,
+        result: Result<Option<Self::Result>, AnyError>,
+    ) -> Self::Response;
+}
+
+struct OnResolveHook;
+impl PluginHook for OnResolveHook {
+    type Request = protocol::OnResolveRequest;
+    type Response = protocol::OnResolveResponse;
+    type Args = OnResolveArgs;
+    type Result = OnResolveResult;
+    fn call_handler(
+        plugin_handler: Arc<dyn PluginHandler>,
+        args: Self::Args,
+    ) -> impl Future<Output = Result<Option<Self::Result>, AnyError>> {
+        async move { plugin_handler.on_resolve(args).await }
+    }
+    fn response_from_result(
+        id: u32,
+        result: Result<Option<Self::Result>, AnyError>,
+    ) -> Self::Response {
+        match result {
+            Ok(result) => resolve_result_to_response(id, result),
+            Err(e) => {
+                log::debug!("error calling on-resolve: {}", e);
+                protocol::OnResolveResponse::default()
+            }
+        }
+    }
+}
+
+impl From<protocol::OnResolveRequest> for OnResolveArgs {
+    fn from(on_resolve: protocol::OnResolveRequest) -> Self {
+        fn empty_none(s: String) -> Option<String> {
+            if s.is_empty() { None } else { Some(s) }
+        }
+        OnResolveArgs {
+            key: on_resolve.key,
+            ids: on_resolve.ids,
+            path: on_resolve.path,
+            importer: empty_none(on_resolve.importer),
+            kind: on_resolve.kind,
+            namespace: empty_none(on_resolve.namespace),
+            resolve_dir: on_resolve.resolve_dir,
+            with: on_resolve.with,
+        }
+    }
+}
+
+struct OnLoadHook;
+impl PluginHook for OnLoadHook {
+    type Request = protocol::OnLoadRequest;
+    type Response = protocol::OnLoadResponse;
+    type Args = OnLoadArgs;
+    type Result = OnLoadResult;
+    fn call_handler(
+        plugin_handler: Arc<dyn PluginHandler>,
+        args: Self::Args,
+    ) -> impl Future<Output = Result<Option<Self::Result>, AnyError>> {
+        async move { plugin_handler.on_load(args).await }
+    }
+    fn response_from_result(
+        id: u32,
+        result: Result<Option<Self::Result>, AnyError>,
+    ) -> Self::Response {
+        match result {
+            Ok(result) => load_result_to_response(id, result),
+            Err(e) => {
+                log::debug!("error calling on-load: {}", e);
+                protocol::OnLoadResponse::default()
+            }
+        }
+    }
+}
+impl From<protocol::OnLoadRequest> for OnLoadArgs {
+    fn from(on_load: protocol::OnLoadRequest) -> Self {
+        OnLoadArgs {
+            key: on_load.key,
+            path: on_load.path,
+            ids: on_load.ids,
+            namespace: on_load.namespace,
+            suffix: on_load.suffix,
+            plugin_data: on_load.plugin_data,
+            with: on_load.with,
+        }
+    }
+}
+
+struct OnStartHook;
+impl PluginHook for OnStartHook {
+    type Request = protocol::OnStartRequest;
+    type Response = protocol::OnStartResponse;
+    type Args = OnStartArgs;
+    type Result = OnStartResult;
+    fn call_handler(
+        plugin_handler: Arc<dyn PluginHandler>,
+        args: Self::Args,
+    ) -> impl Future<Output = Result<Option<Self::Result>, AnyError>> {
+        async move { plugin_handler.on_start(args).await }
+    }
+    fn response_from_result(
+        _id: u32,
+        result: Result<Option<Self::Result>, AnyError>,
+    ) -> Self::Response {
+        match result {
+            Ok(Some(result)) => protocol::OnStartResponse {
+                errors: result.errors.unwrap_or_default(),
+                warnings: result.warnings.unwrap_or_default(),
+            },
+            Ok(None) => protocol::OnStartResponse::default(),
+            Err(e) => {
+                log::debug!("error calling on-start: {}", e);
+                protocol::OnStartResponse::default()
+            }
+        }
+    }
+}
+
+impl From<protocol::OnStartRequest> for OnStartArgs {
+    fn from(on_start: protocol::OnStartRequest) -> Self {
+        OnStartArgs { key: on_start.key }
+    }
+}
+
+async fn handle_hook<H: PluginHook>(
+    id: u32,
+    request: H::Request,
+    response_tx: &mpsc::Sender<protocol::ProtocolPacket>,
+    plugin_handler: Arc<dyn PluginHandler>,
+) -> Result<(), AnyError> {
+    let args = H::Args::from(request);
+    let result = H::call_handler(plugin_handler, args).await;
+    let response = H::response_from_result(id, result);
+    response_tx
+        .send(protocol::ProtocolPacket {
+            id,
+            is_request: false,
+            value: protocol::ProtocolMessage::Response(response.into()),
+        })
+        .await?;
+
+    Ok(())
+}
+
+fn spawn_hook<H: PluginHook>(
+    id: u32,
+    map: &IndexMap<String, AnyValue>,
+    response_tx: &mpsc::Sender<protocol::ProtocolPacket>,
+    plugin_handler: Arc<dyn PluginHandler>,
+) -> Result<deno_unsync::JoinHandle<Result<(), AnyError>>, AnyError>
+where
+    H::Request: 'static,
+{
+    let request = H::Request::from_map(map)?;
+    let response_tx = response_tx.clone();
+    let plugin_handler = plugin_handler.clone();
+    Ok(deno_unsync::spawn(async move {
+        handle_hook::<H>(id, request, &response_tx, plugin_handler).await?;
+        Ok(())
+    }))
+}
+
 async fn handle_packet(
     packet: AnyPacket,
     response_tx: &mpsc::Sender<protocol::ProtocolPacket>,
@@ -404,178 +588,32 @@ async fn handle_packet(
                 match index_map.get("command").map(|v| v.as_string()) {
                     Some(Ok(s)) => match s.as_str() {
                         "on-start" => {
-                            let _on_start = protocol::OnStartRequest::from_map(index_map)?;
-                            // eprintln!("on-start: {:?}", _on_start);
-                            response_tx
-                                .send(protocol::ProtocolPacket {
-                                    id: packet.id,
-                                    is_request: false,
-                                    value: protocol::ProtocolMessage::Response(
-                                        protocol::AnyResponse::OnStart(OnStartResponse {
-                                            errors: vec![],
-                                            warnings: vec![],
-                                        }),
-                                    ),
-                                })
-                                .await?;
+                            handle_hook::<OnStartHook>(
+                                packet.id,
+                                protocol::OnStartRequest::from_map(index_map)?,
+                                &response_tx,
+                                plugin_handler,
+                            )
+                            .await?;
                             Ok(())
                         }
                         "on-resolve" => {
-                            // eprintln!("got on resolve");
-                            let on_resolve = protocol::OnResolveRequest::from_map(index_map)?;
-
-                            fn empty_none(s: String) -> Option<String> {
-                                if s.is_empty() { None } else { Some(s) }
-                            }
-
-                            let id = packet.id;
-                            // eprintln!("on-resolve: {:?}", on_resolve);
-                            let response_tx = response_tx.clone();
-                            deno_unsync::spawn(async move {
-                                let result = plugin_handler
-                                    .on_resolve(OnResolveArgs {
-                                        key: on_resolve.key,
-                                        ids: on_resolve.ids,
-                                        path: on_resolve.path,
-                                        importer: empty_none(on_resolve.importer),
-                                        kind: on_resolve.kind,
-                                        namespace: empty_none(on_resolve.namespace),
-                                        resolve_dir: on_resolve.resolve_dir,
-                                        with: on_resolve.with,
-                                    })
-                                    .await;
-                                match result {
-                                    Ok(result) => {
-                                        let response = resolve_result_to_response(id, result);
-                                        // eprintln!("on-resolve result: {:?}", on_resolve_result);
-                                        let _ = response_tx
-                                            .send(protocol::ProtocolPacket {
-                                                id,
-                                                is_request: false,
-                                                value: protocol::ProtocolMessage::Response(
-                                                    protocol::AnyResponse::OnResolve(response),
-                                                ),
-                                            })
-                                            .await;
-                                    }
-                                    Err(e) => {
-                                        log::debug!(
-                                            "{}: on-resolve: {}",
-                                            deno_terminal::colors::red("error"),
-                                            e
-                                        );
-                                        let _ = response_tx
-                                            .send(protocol::ProtocolPacket {
-                                                id,
-                                                is_request: false,
-                                                value: protocol::ProtocolMessage::Response(
-                                                    protocol::AnyResponse::OnResolve(
-                                                        protocol::OnResolveResponse {
-                                                            // id: Some(id),
-                                                            // plugin_name: Some("deno".to_string()),
-                                                            errors: Some(vec![
-                                                            //     PartialMessage {
-                                                            //     // text: Some(e.to_string()),
-                                                            //     // id: Some("deno".to_string()),
-                                                            //     // plugin_name: Some(
-                                                            //     //     "deno".to_string(),
-                                                            //     // ),
-                                                            //     // location: Some(
-                                                            //     //     protocol::Location {
-                                                            //     //         file: "foo.ts".to_string(),
-                                                            //     //         namespace: "file"
-                                                            //     //             .to_string(),
-                                                            //     //         line: 1,
-                                                            //     //         column: 1,
-                                                            //     //         length: 1,
-                                                            //     //         line_text: "foo"
-                                                            //     //             .to_string(),
-                                                            //     //         suggestion: "bar"
-                                                            //     //             .to_string(),
-                                                            //     //     },
-                                                            //     // ),
-                                                            //     // notes: Some(vec![]),
-                                                            //     // detail: Some(
-                                                            //     //     protocol::AnyValue::U32(3),
-                                                            //     // ),
-                                                            //     // detail: None,
-                                                            //     ..Default::default()
-                                                            // }]
-                                                            ]),
-                                                            ..Default::default()
-                                                        },
-                                                    ),
-                                                ),
-                                            })
-                                            .await;
-                                    }
-                                }
-                            });
+                            spawn_hook::<OnResolveHook>(
+                                packet.id,
+                                index_map,
+                                &response_tx,
+                                plugin_handler,
+                            )?;
 
                             return Ok(());
                         }
                         "on-load" => {
-                            let on_load = protocol::OnLoadRequest::from_map(index_map)?;
-                            let response_tx = response_tx.clone();
-
-                            let id = packet.id;
-                            let path = on_load.path.clone();
-                            deno_unsync::spawn(async move {
-                                let result = plugin_handler
-                                    .on_load(OnLoadArgs {
-                                        key: on_load.key,
-                                        path: on_load.path,
-                                        ids: on_load.ids,
-                                        namespace: on_load.namespace,
-                                        suffix: on_load.suffix,
-                                        plugin_data: on_load.plugin_data,
-                                        with: on_load.with,
-                                    })
-                                    .await;
-
-                                log::debug!("on-load result: {:?}", result);
-                                match result {
-                                    Ok(result) => {
-                                        let response = load_result_to_response(id, result);
-                                        log::debug!("on-load response: {} -> {:?}", path, response);
-                                        let _ = response_tx
-                                            .send(protocol::ProtocolPacket {
-                                                id,
-                                                is_request: false,
-                                                value: protocol::ProtocolMessage::Response(
-                                                    protocol::AnyResponse::OnLoad(response),
-                                                ),
-                                            })
-                                            .await;
-                                    }
-                                    Err(e) => {
-                                        log::debug!(
-                                            "{}: on-load: {}",
-                                            deno_terminal::colors::red("error"),
-                                            e,
-                                        );
-                                        let res = response_tx
-                                            .send(protocol::ProtocolPacket {
-                                                id,
-                                                is_request: false,
-                                                value: protocol::ProtocolMessage::Response(
-                                                    protocol::AnyResponse::OnLoad(
-                                                        protocol::OnLoadResponse {
-                                                            // id: Some(id),
-                                                            // errors: Some(vec![PartialMessage {
-                                                            //     text: e.to_string(),
-                                                            //     ..Default::default()
-                                                            // }]),
-                                                            errors: Some(vec![]),
-                                                            ..Default::default()
-                                                        },
-                                                    ),
-                                                ),
-                                            })
-                                            .await;
-                                    }
-                                }
-                            });
+                            spawn_hook::<OnLoadHook>(
+                                packet.id,
+                                index_map,
+                                &response_tx,
+                                plugin_handler,
+                            )?;
                             return Ok(());
                         }
                         _ => {
