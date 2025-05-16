@@ -226,12 +226,12 @@ pub struct BuildRequest {
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Message {
-    id: String,
-    plugin_name: String,
-    text: String,
-    location: Option<Location>,
-    notes: Vec<Note>,
-    detail: Option<AnyValue>,
+    pub id: String,
+    pub plugin_name: String,
+    pub text: String,
+    pub location: Option<Location>,
+    pub notes: Vec<Note>,
+    pub detail: Option<AnyValue>,
     // detail: any
 }
 
@@ -259,18 +259,18 @@ pub struct Location {
 
 protocol_impls!(for Location { file, namespace, line, column, length, line_text, suggestion });
 
-#[derive(serde::Deserialize, Debug, Clone)]
+#[derive(serde::Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PartialMessage {
-    pub id: Option<String>,
-    pub plugin_name: Option<String>,
-    pub text: Option<String>,
+    pub id: String,
+    pub plugin_name: String,
+    pub text: String,
     pub location: Option<Location>,
     pub notes: Option<Vec<Note>>,
     pub detail: Option<AnyValue>,
 }
 
-protocol_impls!(for PartialMessage { #[optional] id, #[optional] plugin_name, #[optional] text, #[optional] location, #[optional] notes, #[optional] detail });
+protocol_impls!(for PartialMessage { id, plugin_name, text, #[optional] location, #[optional] notes, #[optional] detail });
 
 #[derive(serde::Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -285,7 +285,7 @@ pub struct ServeOnRequestArgs {
 
 impl_encode_struct!(for ServeOnRequestArgs { remote_address, method, path, status, time_in_ms });
 
-#[derive(serde::Deserialize, Debug, Clone)]
+#[derive(serde::Deserialize, Debug, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub enum ImportKind {
     EntryPoint,
@@ -722,9 +722,10 @@ impl<T: Debug> Debug for OptionNull<T> {
     }
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
+#[derive(serde::Deserialize, Debug, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct OnResolveResponse {
+    // TODO(nathanwhit): plugin id or request id or ??
     pub id: Option<u32>,
     pub plugin_name: Option<String>,
     pub errors: Option<Vec<PartialMessage>>,
@@ -776,7 +777,7 @@ impl_encode_command!(for OnLoadRequest {
   key, ids, path, namespace, suffix, plugin_data, with
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
+#[derive(serde::Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct OnLoadResponse {
     pub id: Option<u32>,
@@ -785,10 +786,30 @@ pub struct OnLoadResponse {
     pub warnings: Option<Vec<PartialMessage>>,
     pub contents: Option<Vec<u8>>,
     pub resolve_dir: Option<String>,
-    pub loader: Option<String>, // Consider an enum for known loader types
+    pub loader: Option<String>,
     pub plugin_data: Option<u32>,
     pub watch_files: Option<Vec<String>>,
     pub watch_dirs: Option<Vec<String>>,
+}
+
+impl Debug for OnLoadResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OnLoadResponse")
+            .field("id", &self.id)
+            .field("plugin_name", &self.plugin_name)
+            .field("errors", &self.errors)
+            .field("warnings", &self.warnings)
+            .field(
+                "contents",
+                &self.contents.as_ref().map(|c| String::from_utf8_lossy(c)),
+            )
+            .field("resolve_dir", &self.resolve_dir)
+            .field("loader", &self.loader)
+            .field("plugin_data", &self.plugin_data)
+            .field("watch_files", &self.watch_files)
+            .field("watch_dirs", &self.watch_dirs)
+            .finish()
+    }
 }
 
 impl_encode_struct!(for OnLoadResponse {

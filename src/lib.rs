@@ -111,7 +111,7 @@ async fn handle_read(amount: usize, state: &mut ProtocolState) {
         } else {
             match protocol::decode_any_packet(message) {
                 Ok(packet) => {
-                    // eprintln!("decoded packet: {packet:?}");
+                    log::trace!("decoded packet: {packet:?}");
                     state.packet_tx.send(packet).await.unwrap()
                 }
                 Err(e) => eprintln!("Error decoding packet: {}", e),
@@ -138,7 +138,7 @@ async fn protocol_task(
         tokio::select! {
             res = response_rx.recv() => {
                 let packet: protocol::ProtocolPacket = res.unwrap();
-                // eprintln!("got send packet from receiver: {packet:?}");
+                log::trace!("got send packet from receiver: {packet:?}");
                 let mut encoded = Vec::new();
                 packet.encode_into(&mut encoded);
                 // eprintln!("encoded: {:?}", encoded);
@@ -212,7 +212,7 @@ impl EsbuildService {
         let (packet_tx, mut packet_rx) = mpsc::channel(100);
         let (response_tx, response_rx) = mpsc::channel(100);
         let (exited_tx, exited_rx) = watch::channel(None);
-        tokio::spawn(protocol_task(
+        deno_unsync::spawn(protocol_task(
             stdout,
             stdin,
             ready_tx,
@@ -220,7 +220,7 @@ impl EsbuildService {
             packet_tx,
         ));
 
-        tokio::spawn(async move {
+        deno_unsync::spawn(async move {
             let status = esbuild.wait().await.unwrap();
             let _ = exited_tx.send(Some(status));
         });
@@ -229,7 +229,7 @@ impl EsbuildService {
         let plugin_handler = plugin_handler.make_plugin_handler(client.clone());
         let pending = client.0.pending.clone();
 
-        tokio::spawn(async move {
+        deno_unsync::spawn(async move {
             loop {
                 let packet = packet_rx.recv().await;
                 // eprintln!("got packet from receiver: {packet:?}");
@@ -280,6 +280,53 @@ pub struct OnResolveResult {
     pub watch_dirs: Option<Vec<String>>,
 }
 
+fn resolve_result_to_response(
+    id: u32,
+    result: Option<OnResolveResult>,
+) -> protocol::OnResolveResponse {
+    match result {
+        Some(result) => protocol::OnResolveResponse {
+            id: Some(id),
+            plugin_name: result.plugin_name,
+            errors: result.errors,
+            warnings: result.warnings,
+            path: result.path,
+            external: result.external,
+            side_effects: result.side_effects,
+            namespace: result.namespace,
+            suffix: result.suffix,
+            plugin_data: result.plugin_data,
+            watch_files: result.watch_files,
+            watch_dirs: result.watch_dirs,
+        },
+        None => protocol::OnResolveResponse {
+            id: Some(id),
+            ..Default::default()
+        },
+    }
+}
+
+fn load_result_to_response(id: u32, result: Option<OnLoadResult>) -> protocol::OnLoadResponse {
+    match result {
+        Some(result) => protocol::OnLoadResponse {
+            id: result.id,
+            plugin_name: result.plugin_name,
+            errors: result.errors,
+            warnings: result.warnings,
+            contents: result.contents,
+            resolve_dir: result.resolve_dir,
+            loader: result.loader.map(|loader| loader.to_string()),
+            plugin_data: result.plugin_data,
+            watch_files: result.watch_files,
+            watch_dirs: result.watch_dirs,
+        },
+        None => protocol::OnLoadResponse {
+            id: Some(id),
+            ..Default::default()
+        },
+    }
+}
+
 // pub trait PluginInfo {
 //     fn name(&self) -> &'static str;
 //     fn provides_on_resolve(&self) -> bool {
@@ -294,12 +341,13 @@ pub struct OnResolveResult {
 //     // fn on_load(&self)
 // }
 
-#[async_trait]
-pub trait PluginHandler: Send + Sync {
+#[async_trait(?Send)]
+pub trait PluginHandler {
     async fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError>;
     async fn on_load(&self, _args: OnLoadArgs) -> Result<Option<OnLoadResult>, AnyError>;
 }
 
+#[derive(Default)]
 pub struct OnLoadResult {
     pub id: Option<u32>,
     pub plugin_name: Option<String>,
@@ -311,6 +359,26 @@ pub struct OnLoadResult {
     pub plugin_data: Option<u32>,
     pub watch_files: Option<Vec<String>>,
     pub watch_dirs: Option<Vec<String>>,
+}
+
+impl std::fmt::Debug for OnLoadResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OnLoadResult")
+            .field("id", &self.id)
+            .field("plugin_name", &self.plugin_name)
+            .field("errors", &self.errors)
+            .field("warnings", &self.warnings)
+            .field(
+                "contents",
+                &self.contents.as_ref().map(|c| String::from_utf8_lossy(c)),
+            )
+            .field("resolve_dir", &self.resolve_dir)
+            .field("loader", &self.loader)
+            .field("plugin_data", &self.plugin_data)
+            .field("watch_files", &self.watch_files)
+            .field("watch_dirs", &self.watch_dirs)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -337,7 +405,7 @@ async fn handle_packet(
                     Some(Ok(s)) => match s.as_str() {
                         "on-start" => {
                             let _on_start = protocol::OnStartRequest::from_map(index_map)?;
-                            eprintln!("on-start: {:?}", _on_start);
+                            // eprintln!("on-start: {:?}", _on_start);
                             response_tx
                                 .send(protocol::ProtocolPacket {
                                     id: packet.id,
@@ -363,7 +431,7 @@ async fn handle_packet(
                             let id = packet.id;
                             // eprintln!("on-resolve: {:?}", on_resolve);
                             let response_tx = response_tx.clone();
-                            tokio::spawn(async move {
+                            deno_unsync::spawn(async move {
                                 let result = plugin_handler
                                     .on_resolve(OnResolveArgs {
                                         key: on_resolve.key,
@@ -377,22 +445,9 @@ async fn handle_packet(
                                     })
                                     .await;
                                 match result {
-                                    Ok(Some(on_resolve_result)) => {
+                                    Ok(result) => {
+                                        let response = resolve_result_to_response(id, result);
                                         // eprintln!("on-resolve result: {:?}", on_resolve_result);
-                                        let response = protocol::OnResolveResponse {
-                                            id: Some(id),
-                                            plugin_name: on_resolve_result.plugin_name,
-                                            errors: None,
-                                            warnings: None,
-                                            path: on_resolve_result.path,
-                                            external: on_resolve_result.external,
-                                            side_effects: on_resolve_result.side_effects,
-                                            namespace: on_resolve_result.namespace,
-                                            suffix: on_resolve_result.suffix,
-                                            plugin_data: on_resolve_result.plugin_data,
-                                            watch_files: on_resolve_result.watch_files,
-                                            watch_dirs: on_resolve_result.watch_dirs,
-                                        };
                                         let _ = response_tx
                                             .send(protocol::ProtocolPacket {
                                                 id,
@@ -403,32 +458,57 @@ async fn handle_packet(
                                             })
                                             .await;
                                     }
-                                    Ok(None) => {
-                                        let response = protocol::OnResolveResponse {
-                                            id: Some(id),
-                                            plugin_name: None,
-                                            errors: None,
-                                            warnings: None,
-                                            path: None,
-                                            external: None,
-                                            side_effects: None,
-                                            namespace: None,
-                                            suffix: None,
-                                            plugin_data: None,
-                                            watch_files: None,
-                                            watch_dirs: None,
-                                        };
+                                    Err(e) => {
+                                        log::debug!(
+                                            "{}: on-resolve: {}",
+                                            deno_terminal::colors::red("error"),
+                                            e
+                                        );
                                         let _ = response_tx
                                             .send(protocol::ProtocolPacket {
                                                 id,
                                                 is_request: false,
                                                 value: protocol::ProtocolMessage::Response(
-                                                    protocol::AnyResponse::OnResolve(response),
+                                                    protocol::AnyResponse::OnResolve(
+                                                        protocol::OnResolveResponse {
+                                                            // id: Some(id),
+                                                            // plugin_name: Some("deno".to_string()),
+                                                            errors: Some(vec![
+                                                            //     PartialMessage {
+                                                            //     // text: Some(e.to_string()),
+                                                            //     // id: Some("deno".to_string()),
+                                                            //     // plugin_name: Some(
+                                                            //     //     "deno".to_string(),
+                                                            //     // ),
+                                                            //     // location: Some(
+                                                            //     //     protocol::Location {
+                                                            //     //         file: "foo.ts".to_string(),
+                                                            //     //         namespace: "file"
+                                                            //     //             .to_string(),
+                                                            //     //         line: 1,
+                                                            //     //         column: 1,
+                                                            //     //         length: 1,
+                                                            //     //         line_text: "foo"
+                                                            //     //             .to_string(),
+                                                            //     //         suggestion: "bar"
+                                                            //     //             .to_string(),
+                                                            //     //     },
+                                                            //     // ),
+                                                            //     // notes: Some(vec![]),
+                                                            //     // detail: Some(
+                                                            //     //     protocol::AnyValue::U32(3),
+                                                            //     // ),
+                                                            //     // detail: None,
+                                                            //     ..Default::default()
+                                                            // }]
+                                                            ]),
+                                                            ..Default::default()
+                                                        },
+                                                    ),
                                                 ),
                                             })
                                             .await;
                                     }
-                                    Err(e) => eprintln!("Error on-resolve: {}", e),
                                 }
                             });
 
@@ -439,7 +519,8 @@ async fn handle_packet(
                             let response_tx = response_tx.clone();
 
                             let id = packet.id;
-                            tokio::spawn(async move {
+                            let path = on_load.path.clone();
+                            deno_unsync::spawn(async move {
                                 let result = plugin_handler
                                     .on_load(OnLoadArgs {
                                         key: on_load.key,
@@ -451,22 +532,12 @@ async fn handle_packet(
                                         with: on_load.with,
                                     })
                                     .await;
+
+                                log::debug!("on-load result: {:?}", result);
                                 match result {
-                                    Ok(Some(on_load_result)) => {
-                                        let response = protocol::OnLoadResponse {
-                                            id: on_load_result.id,
-                                            plugin_name: on_load_result.plugin_name,
-                                            errors: on_load_result.errors,
-                                            warnings: on_load_result.warnings,
-                                            contents: on_load_result.contents,
-                                            resolve_dir: on_load_result.resolve_dir,
-                                            loader: on_load_result
-                                                .loader
-                                                .map(|loader| loader.to_string()),
-                                            plugin_data: on_load_result.plugin_data,
-                                            watch_files: on_load_result.watch_files,
-                                            watch_dirs: on_load_result.watch_dirs,
-                                        };
+                                    Ok(result) => {
+                                        let response = load_result_to_response(id, result);
+                                        log::debug!("on-load response: {} -> {:?}", path, response);
                                         let _ = response_tx
                                             .send(protocol::ProtocolPacket {
                                                 id,
@@ -477,30 +548,32 @@ async fn handle_packet(
                                             })
                                             .await;
                                     }
-                                    Ok(None) => {
-                                        let response = protocol::OnLoadResponse {
-                                            id: None,
-                                            plugin_name: None,
-                                            errors: None,
-                                            warnings: None,
-                                            contents: None,
-                                            resolve_dir: None,
-                                            loader: None,
-                                            plugin_data: None,
-                                            watch_files: None,
-                                            watch_dirs: None,
-                                        };
-                                        let _ = response_tx
+                                    Err(e) => {
+                                        log::debug!(
+                                            "{}: on-load: {}",
+                                            deno_terminal::colors::red("error"),
+                                            e,
+                                        );
+                                        let res = response_tx
                                             .send(protocol::ProtocolPacket {
                                                 id,
                                                 is_request: false,
                                                 value: protocol::ProtocolMessage::Response(
-                                                    protocol::AnyResponse::OnLoad(response),
+                                                    protocol::AnyResponse::OnLoad(
+                                                        protocol::OnLoadResponse {
+                                                            // id: Some(id),
+                                                            // errors: Some(vec![PartialMessage {
+                                                            //     text: e.to_string(),
+                                                            //     ..Default::default()
+                                                            // }]),
+                                                            errors: Some(vec![]),
+                                                            ..Default::default()
+                                                        },
+                                                    ),
                                                 ),
                                             })
                                             .await;
                                     }
-                                    Err(e) => eprintln!("Error on-load: {}", e),
                                 }
                             });
                             return Ok(());
@@ -649,10 +722,14 @@ pub struct EsbuildFlags {
     tree_shaking: Option<bool>,
     bundle: Option<bool>,
     outfile: Option<String>,
+    outdir: Option<String>,
     packages: Option<PackagesHandling>,
     tsconfig: Option<String>,
     tsconfig_raw: Option<String>,
     loader: Option<IndexMap<String, BuiltinLoader>>,
+    external: Option<Vec<String>>,
+    minify: Option<bool>,
+    splitting: Option<bool>,
 }
 fn default<T: Default>() -> T {
     T::default()
@@ -669,10 +746,14 @@ impl Default for EsbuildFlags {
             tree_shaking: Some(true),
             bundle: Some(true),
             outfile: default(),
+            outdir: default(),
             packages: Some(PackagesHandling::Bundle),
             tsconfig: default(),
             tsconfig_raw: default(),
             loader: default(),
+            external: default(),
+            minify: default(),
+            splitting: default(),
         }
     }
 }
@@ -765,6 +846,9 @@ impl EsbuildFlags {
         if let Some(outfile) = &self.outfile {
             flags.push(format!("--outfile={}", outfile));
         }
+        if let Some(outdir) = &self.outdir {
+            flags.push(format!("--outdir={}", outdir));
+        }
         if let Some(packages) = self.packages {
             flags.push(format!("--packages={}", packages));
         }
@@ -776,9 +860,25 @@ impl EsbuildFlags {
         }
         if let Some(loader) = &self.loader {
             for (key, value) in loader {
-                flags.push(format!("--loader={}={}", key, value));
+                flags.push(format!("--loader:{}={}", key, value));
             }
         }
+        if let Some(external) = &self.external {
+            for external in external {
+                flags.push(format!("--external:{}", external));
+            }
+        }
+        if let Some(minify) = self.minify {
+            if minify {
+                flags.push(format!("--minify"));
+            }
+        }
+        if let Some(splitting) = self.splitting {
+            if splitting {
+                flags.push(format!("--splitting"));
+            }
+        }
+
         flags
     }
 }

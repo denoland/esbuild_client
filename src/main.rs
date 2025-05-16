@@ -9,21 +9,23 @@ use esbuild_rs::{EsbuildService, PluginHandler};
 
 pub struct Handler;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl PluginHandler for Handler {
     async fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError> {
         eprintln!("on-resolve: {:?}", _args);
-        Ok(None)
+        Err(anyhow::anyhow!("error"))
+        // Ok(None)
         // todo!()
     }
 
     async fn on_load(&self, _args: OnLoadArgs) -> Result<Option<OnLoadResult>, AnyError> {
-        Ok(None)
+        Err(anyhow::anyhow!("error"))
     }
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    pretty_env_logger::init();
     let path = "/Users/nathanwhit/Library/Caches/esbuild/bin/@esbuild-darwin-arm64@0.25.4";
     let path = Path::new(&path);
 
@@ -49,13 +51,13 @@ async fn main() {
     }
 
     let flags = EsbuildFlagsBuilder::default()
-        // .outfile("./temp/mod.js".into())
+        .outfile("./temp/mod.js".into())
         .build()
         .unwrap();
 
     let response = client
         .send_build_request(protocol::BuildRequest {
-            entries: vec![("".into(), "./tools/common.ts".into())],
+            entries: vec![("".into(), "./main.tsx".into())],
             key: 0,
             flags: flags.to_flags(),
             write: true,
