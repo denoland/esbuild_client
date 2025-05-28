@@ -1,0 +1,85 @@
+use std::path::PathBuf;
+
+use directories::ProjectDirs;
+
+fn base_dir() -> PathBuf {
+    let project_dirs =
+        ProjectDirs::from("esbuild_rs_test", "esbuild_rs_test", "esbuild_rs_test").unwrap();
+    project_dirs.cache_dir().to_path_buf()
+}
+
+fn npm_package_name() -> String {
+    let platform = match (std::env::consts::ARCH, std::env::consts::OS) {
+        ("x86_64", "linux") => "linux-x64".to_string(),
+        ("aarch64", "linux") => "linux-arm64".to_string(),
+        ("x86_64", "macos" | "apple") => "darwin-x64".to_string(),
+        ("aarch64", "macos" | "apple") => "darwin-arm64".to_string(),
+        ("x86_64", "windows") => "win32-x64".to_string(),
+        ("aarch64", "windows") => "win32-arm64".to_string(),
+        _ => panic!(
+            "Unsupported platform: {} {}",
+            std::env::consts::ARCH,
+            std::env::consts::OS
+        ),
+    };
+
+    format!("@esbuild/{}", platform)
+}
+
+pub const ESBUILD_VERSION: &str = "0.25.5";
+
+fn npm_package_url() -> String {
+    let package_name = npm_package_name();
+    let Some((_, platform)) = package_name.split_once('/') else {
+        panic!("Invalid package name: {}", package_name);
+    };
+
+    format!(
+        "https://registry.npmjs.org/{}/-/{}-{}.tgz",
+        package_name, platform, ESBUILD_VERSION
+    )
+}
+
+pub fn fetch_esbuild() -> PathBuf {
+    let esbuild_bin_dir = base_dir().join("bin");
+    if !esbuild_bin_dir.exists() {
+        std::fs::create_dir_all(&esbuild_bin_dir).unwrap();
+    }
+
+    let esbuild_bin_path = esbuild_bin_dir.join("esbuild");
+
+    if esbuild_bin_path.exists() {
+        return esbuild_bin_path;
+    }
+
+    let esbuild_bin_url = npm_package_url();
+    let response = ureq::get(esbuild_bin_url).call().unwrap();
+
+    let reader = response.into_body().into_reader();
+    let decoder = flate2::read::GzDecoder::new(reader);
+    let mut archive = tar::Archive::new(decoder);
+
+    for entry in archive.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        let path = entry.path().unwrap();
+
+        if path == std::path::Path::new("package/bin/esbuild") {
+            std::io::copy(
+                &mut entry,
+                &mut std::fs::File::create(&esbuild_bin_path).unwrap(),
+            )
+            .unwrap();
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&esbuild_bin_path, std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
+
+            break;
+        }
+    }
+
+    esbuild_bin_path
+}
