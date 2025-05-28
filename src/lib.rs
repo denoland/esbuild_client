@@ -63,7 +63,7 @@ struct ProtocolState {
 impl ProtocolState {
     fn new(ready_tx: oneshot::Sender<()>, packet_tx: mpsc::Sender<AnyPacket>) -> Self {
         let mut buffer = Vec::with_capacity(1024);
-        buffer.extend(std::iter::repeat(0).take(1024));
+        buffer.extend(std::iter::repeat_n(0, 1024));
         let read_into_offset = 0;
         let offset = 0;
 
@@ -82,7 +82,7 @@ impl ProtocolState {
 async fn handle_read(amount: usize, state: &mut ProtocolState) {
     state.read_into_offset += amount;
     if state.read_into_offset >= state.buffer.len() {
-        state.buffer.extend(std::iter::repeat(0).take(1024));
+        state.buffer.extend(std::iter::repeat_n(0, 1024));
     }
     while state.offset + 4 <= state.read_into_offset {
         let length = u32::from_le_bytes(
@@ -219,7 +219,7 @@ impl EsbuildService {
     ) -> Result<Self, AnyError> {
         let path = path.as_ref();
         let mut esbuild = tokio::process::Command::new(path)
-            .arg(&format!("--service={}", version))
+            .arg(format!("--service={}", version))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -432,12 +432,10 @@ impl PluginHook for OnResolveHook {
     type Response = protocol::OnResolveResponse;
     type Args = OnResolveArgs;
     type Result = OnResolveResult;
-    fn call_handler(
+    async fn call_handler(
         plugin_handler: Arc<dyn PluginHandler>,
         args: Self::Args,
-    ) -> impl Future<Output = Result<Option<Self::Result>, AnyError>> {
-        async move { plugin_handler.on_resolve(args).await }
-    }
+    ) -> Result<Option<Self::Result>, AnyError> { plugin_handler.on_resolve(args).await }
     fn response_from_result(
         id: u32,
         result: Result<Option<Self::Result>, AnyError>,
@@ -476,12 +474,10 @@ impl PluginHook for OnLoadHook {
     type Response = protocol::OnLoadResponse;
     type Args = OnLoadArgs;
     type Result = OnLoadResult;
-    fn call_handler(
+    async fn call_handler(
         plugin_handler: Arc<dyn PluginHandler>,
         args: Self::Args,
-    ) -> impl Future<Output = Result<Option<Self::Result>, AnyError>> {
-        async move { plugin_handler.on_load(args).await }
-    }
+    ) -> Result<Option<Self::Result>, AnyError> { plugin_handler.on_load(args).await }
     fn response_from_result(
         id: u32,
         result: Result<Option<Self::Result>, AnyError>,
@@ -515,12 +511,10 @@ impl PluginHook for OnStartHook {
     type Response = protocol::OnStartResponse;
     type Args = OnStartArgs;
     type Result = OnStartResult;
-    fn call_handler(
+    async fn call_handler(
         plugin_handler: Arc<dyn PluginHandler>,
         args: Self::Args,
-    ) -> impl Future<Output = Result<Option<Self::Result>, AnyError>> {
-        async move { plugin_handler.on_start(args).await }
-    }
+    ) -> Result<Option<Self::Result>, AnyError> { plugin_handler.on_start(args).await }
     fn response_from_result(
         _id: u32,
         result: Result<Option<Self::Result>, AnyError>,
@@ -598,7 +592,7 @@ async fn handle_packet(
                             handle_hook::<OnStartHook>(
                                 packet.id,
                                 protocol::OnStartRequest::from_map(index_map)?,
-                                &response_tx,
+                                response_tx,
                                 plugin_handler,
                             )
                             .await?;
@@ -608,20 +602,20 @@ async fn handle_packet(
                             spawn_hook::<OnResolveHook>(
                                 packet.id,
                                 index_map,
-                                &response_tx,
+                                response_tx,
                                 plugin_handler,
                             )?;
 
-                            return Ok(());
+                            Ok(())
                         }
                         "on-load" => {
                             spawn_hook::<OnLoadHook>(
                                 packet.id,
                                 index_map,
-                                &response_tx,
+                                response_tx,
                                 plugin_handler,
                             )?;
-                            return Ok(());
+                            Ok(())
                         }
                         _ => {
                             todo!("handle: {:?}", packet.value)
@@ -915,12 +909,12 @@ impl EsbuildFlags {
         }
         if let Some(minify) = self.minify {
             if minify {
-                flags.push(format!("--minify"));
+                flags.push("--minify".to_string());
             }
         }
         if let Some(splitting) = self.splitting {
             if splitting {
-                flags.push(format!("--splitting"));
+                flags.push("--splitting".to_string());
             }
         }
 

@@ -30,13 +30,11 @@ pub fn snake_to_camel(s: &str) -> String {
     for c in s.chars() {
         if c == '_' {
             capitalize = true;
+        } else if capitalize {
+            result.push(c.to_ascii_uppercase());
+            capitalize = false;
         } else {
-            if capitalize {
-                result.push(c.to_ascii_uppercase());
-                capitalize = false;
-            } else {
-                result.push(c);
-            }
+            result.push(c);
         }
     }
     result
@@ -259,7 +257,7 @@ impl Encode for AnyResponse {
 impl Encode for ProtocolPacket {
     fn encode_into(&self, buf: &mut Vec<u8>) {
         let idx = buf.len();
-        buf.extend(std::iter::repeat(0).take(4));
+        buf.extend(std::iter::repeat_n(0, 4));
         // eprintln!("tag: {}", (self.id << 1) | !self.is_request as u32);
         // eprintln!("len: {}", buf.len());
         encode_u32_raw(buf, (self.id << 1) | !self.is_request as u32);
@@ -275,7 +273,7 @@ impl Encode for ProtocolPacket {
 impl<T: Encode> Encode for Packet<T> {
     fn encode_into(&self, buf: &mut Vec<u8>) {
         let idx = buf.len();
-        buf.extend(std::iter::repeat(0).take(4));
+        buf.extend(std::iter::repeat_n(0, 4));
         // eprintln!("tag: {}", (self.id << 1) | !self.is_request as u32);
         // eprintln!("len: {}", buf.len());
         encode_u32_raw(buf, (self.id << 1) | !self.is_request as u32);
