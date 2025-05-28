@@ -96,12 +96,18 @@ pub fn fetch_esbuild() -> PathBuf {
     let decoder = flate2::read::GzDecoder::new(reader);
     let mut archive = tar::Archive::new(decoder);
 
+    let want_path = if cfg!(target_os = "windows") {
+        "package/esbuild.exe"
+    } else {
+        "package/bin/esbuild"
+    };
+
     for entry in archive.entries().unwrap() {
         let mut entry = entry.unwrap();
         let path = entry.path().unwrap();
 
         eprintln!("on entry: {:?}", path);
-        if path == std::path::Path::new("package/bin/esbuild") {
+        if path == std::path::Path::new(want_path) {
             eprintln!("extracting esbuild to: {}", esbuild_bin_path.display());
             std::io::copy(
                 &mut entry,
