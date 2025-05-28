@@ -1,3 +1,22 @@
-[workspace]
-resolver = "3"
-members = ["crates/esbuild_rs", "crates/test_util"]
+[package]
+name = "esbuild_rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.98"
+async-trait = "0.1.88"
+deno_unsync = "0.4.2"
+derive_builder = "0.20.2"
+indexmap = { version = "2.9.0" }
+log = "0.4.27"
+parking_lot = "0.12.3"
+paste = "1.0.15"
+tokio = { version = "1", features = ["process", "sync", "io-util", "macros"] }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+directories = "6.0.0"
+flate2 = "1.1.1"
+tar = "0.4.44"
+ureq = "3.0.11"
