@@ -1,10 +1,7 @@
 pub mod encode;
 
 use anyhow::Context;
-use std::{
-    fmt::{Debug, Display},
-    hash::Hash,
-};
+use std::{fmt::Debug, hash::Hash};
 use tokio::sync::oneshot;
 
 use crate::{impl_encode_command, impl_encode_struct};
@@ -67,24 +64,6 @@ macro_rules! enum_impl_from {
 }
 
 pub(crate) use impl_from_map;
-
-#[derive(Debug, thiserror::Error, serde::Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-enum SerializeError {
-    #[error("Failed to encode value")]
-    EncodeError,
-    #[error("Failed to serialize value: {0}")]
-    Serialization(String),
-}
-
-impl serde::ser::Error for SerializeError {
-    fn custom<T>(msg: T) -> Self
-    where
-        T: Display,
-    {
-        SerializeError::Serialization(msg.to_string())
-    }
-}
 
 pub trait Decode {
     fn decode_from<'a>(buf: &mut Buf<'a>) -> Result<Self, anyhow::Error>
@@ -212,16 +191,14 @@ where
     }
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct Packet<T> {
     pub id: u32,
     pub is_request: bool,
     pub value: T,
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct BuildRequest {
     pub key: u32,
     pub entries: Vec<(String, String)>,
@@ -236,8 +213,7 @@ pub struct BuildRequest {
     pub mangle_cache: Option<IndexMap<String, MangleCacheEntry>>,
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct Message {
     pub id: String,
     pub plugin_name: String,
@@ -250,16 +226,14 @@ pub struct Message {
 
 protocol_impls!(for Message { id, plugin_name, text, #[optional] location, notes, #[optional] detail });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct Note {
     pub text: String,
     pub location: Option<Location>,
 }
 protocol_impls!(for Note { text, #[optional] location });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct Location {
     pub file: String,
     pub namespace: String,
@@ -272,8 +246,7 @@ pub struct Location {
 
 protocol_impls!(for Location { file, namespace, line, column, length, line_text, suggestion });
 
-#[derive(serde::Deserialize, Debug, Clone, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default)]
 pub struct PartialMessage {
     pub id: String,
     pub plugin_name: String,
@@ -285,8 +258,7 @@ pub struct PartialMessage {
 
 protocol_impls!(for PartialMessage { id, plugin_name, text, #[optional] location, #[optional] notes, #[optional] detail });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ServeOnRequestArgs {
     pub remote_address: String,
     pub method: String,
@@ -298,8 +270,7 @@ pub struct ServeOnRequestArgs {
 
 impl_encode_struct!(for ServeOnRequestArgs { remote_address, method, path, status, time_in_ms });
 
-#[derive(serde::Deserialize, Debug, Clone, Copy)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy)]
 pub enum ImportKind {
     EntryPoint,
     ImportStatement,
@@ -329,8 +300,7 @@ impl FromAnyValue for ImportKind {
     }
 }
 // Equivalent to TypeScript MangleCacheEntry: string | false
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub enum MangleCacheEntry {
     StringValue(String),
     BoolValue(bool),
@@ -346,8 +316,7 @@ impl FromAnyValue for MangleCacheEntry {
     }
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ServeRequest {
     // command: "serve"; // This will likely be handled by an enum or similar in a real IPC setup
     pub key: u32,
@@ -366,15 +335,13 @@ impl_encode_command!(for ServeRequest {
   key, on_request, port, host, servedir, keyfile, certfile, fallback, cors_origin
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ServeResponse {
     pub port: u32,
     pub hosts: Vec<String>,
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct BuildPlugin {
     pub name: String,
     pub on_start: bool,
@@ -385,8 +352,7 @@ pub struct BuildPlugin {
 
 impl_encode_struct!(for BuildPlugin { name, on_start, on_end, on_resolve, on_load });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct OnResolveSetupOptions {
     pub id: u32,
     pub filter: String,
@@ -395,8 +361,7 @@ pub struct OnResolveSetupOptions {
 
 impl_encode_struct!(for OnResolveSetupOptions { id, filter, namespace });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct OnLoadSetupOptions {
     pub id: u32,
     pub filter: String,
@@ -405,8 +370,7 @@ pub struct OnLoadSetupOptions {
 
 impl_encode_struct!(for OnLoadSetupOptions { id, filter, namespace });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct BuildResponse {
     pub errors: Vec<Message>,
     pub warnings: Vec<Message>,
@@ -420,8 +384,7 @@ impl_from_map!(for BuildResponse {
     errors, warnings, #[optional] output_files, #[optional] metafile, #[optional] mangle_cache, #[optional] write_to_stdout
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct OnEndRequest {
     // Extends BuildResponse
     // command: "on-end";
@@ -436,15 +399,13 @@ pub struct OnEndRequest {
 
 impl_encode_struct!(for OnEndRequest { errors, warnings, output_files, metafile, mangle_cache, write_to_stdout });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct OnEndResponse {
     pub errors: Vec<Message>,
     pub warnings: Vec<Message>,
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct BuildOutputFile {
     pub path: String,
     pub contents: Vec<u8>,
@@ -453,14 +414,12 @@ pub struct BuildOutputFile {
 
 protocol_impls!(for BuildOutputFile { path, contents, hash });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct PingRequest {
     // command: "ping";
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct RebuildRequest {
     // command: "rebuild";
     pub key: u32,
@@ -471,15 +430,13 @@ impl_encode_command!(for RebuildRequest {
   key
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct RebuildResponse {
     pub errors: Vec<Message>,
     pub warnings: Vec<Message>,
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct DisposeRequest {
     // command: "dispose";
     pub key: u32,
@@ -490,8 +447,7 @@ impl_encode_command!(for DisposeRequest {
   key
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct CancelRequest {
     // command: "cancel";
     pub key: u32,
@@ -502,8 +458,7 @@ impl_encode_command!(for CancelRequest {
   key
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct WatchRequest {
     // command: "watch";
     pub key: u32,
@@ -514,8 +469,7 @@ impl_encode_command!(for WatchRequest {
   key
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct OnServeRequest {
     // command: "serve-request";
     pub key: u32,
@@ -527,8 +481,7 @@ impl_encode_command!(for OnServeRequest {
   key, args
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct TransformRequest {
     // command: "transform";
     pub flags: Vec<String>,
@@ -542,8 +495,7 @@ impl_encode_command!(for TransformRequest {
   flags, input, input_fs, mangle_cache
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct TransformResponse {
     pub errors: Vec<Message>,
     pub warnings: Vec<Message>,
@@ -555,8 +507,7 @@ pub struct TransformResponse {
     pub mangle_cache: Option<IndexMap<String, MangleCacheEntry>>,
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct FormatMsgsRequest {
     // command: "format-msgs";
     pub messages: Vec<Message>,
@@ -570,14 +521,12 @@ impl_encode_command!(for FormatMsgsRequest {
   messages, is_warning, color, terminal_width
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct FormatMsgsResponse {
     pub messages: Vec<String>,
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct AnalyzeMetafileRequest {
     // command: "analyze-metafile";
     pub metafile: String,
@@ -590,14 +539,12 @@ impl_encode_command!(for AnalyzeMetafileRequest {
   metafile, color, verbose
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct AnalyzeMetafileResponse {
     pub result: String,
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct OnStartRequest {
     // command: "on-start";
     pub key: u32,
@@ -608,8 +555,7 @@ impl_encode_command!(for OnStartRequest {
   key
 });
 
-#[derive(serde::Deserialize, Debug, Clone, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default)]
 pub struct OnStartResponse {
     pub errors: Vec<PartialMessage>,
     pub warnings: Vec<PartialMessage>,
@@ -617,8 +563,7 @@ pub struct OnStartResponse {
 
 impl_encode_struct!(for OnStartResponse { errors, warnings });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ResolveRequest {
     // command: "resolve";
     pub key: u32,
@@ -637,8 +582,7 @@ impl_encode_command!(for ResolveRequest {
   key, path, plugin_name, importer, namespace, resolve_dir, kind, plugin_data, with
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct ResolveResponse {
     pub errors: Vec<Message>,
     pub warnings: Vec<Message>,
@@ -650,8 +594,7 @@ pub struct ResolveResponse {
     pub plugin_data: u32, // Assuming u32 for opaque data
 }
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct OnResolveRequest {
     // command: "on-resolve";
     pub key: u32,
@@ -670,8 +613,7 @@ impl_from_map!(for OnResolveRequest {
     key, ids, path, importer, namespace, #[optional] resolve_dir, kind, #[optional] plugin_data, with
 });
 
-#[derive(serde::Deserialize, Clone)]
-#[serde(transparent)]
+#[derive(Clone)]
 pub struct OptionNull<T>(Option<T>);
 
 impl<T> OptionNull<T> {
@@ -698,8 +640,7 @@ impl<T: Debug> Debug for OptionNull<T> {
     }
 }
 
-#[derive(serde::Deserialize, Debug, Clone, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default)]
 pub struct OnResolveResponse {
     // TODO(nathanwhit): plugin id or request id or ??
     pub id: Option<u32>,
@@ -731,8 +672,7 @@ impl_encode_struct!(for OnResolveResponse {
     watch_dirs
 });
 
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone)]
 pub struct OnLoadRequest {
     // command: "on-load";
     pub key: u32,
@@ -753,8 +693,7 @@ impl_encode_command!(for OnLoadRequest {
   key, ids, path, namespace, suffix, plugin_data, with
 });
 
-#[derive(serde::Deserialize, Clone, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Default)]
 pub struct OnLoadResponse {
     pub id: Option<u32>,
     pub plugin_name: Option<String>,
@@ -877,8 +816,7 @@ pub struct ProtocolPacket {
 
 // impl Decode
 
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone)]
 pub enum AnyValue {
     Null,
     Bool(bool),

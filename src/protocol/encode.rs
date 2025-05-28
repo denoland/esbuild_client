@@ -219,10 +219,6 @@ pub fn encode_u32_raw(buf: &mut Vec<u8>, value: u32) {
     buf.extend(value.to_le_bytes());
 }
 
-// Implementations moved from protocol.rs
-//
-//
-
 impl Encode for ProtocolMessage {
     fn encode_into(&self, buf: &mut Vec<u8>) {
         match self {
@@ -369,10 +365,64 @@ mod tests {
     }
     #[test]
     fn test_decode_packet_build() {
-        let input: Packet<BuildRequest> = serde_json::from_str(
-            r#"{"id":0,"isRequest":true,"value":{"command":"build","key":0,"entries":[["","./testing.ts"]],"flags":["--color=true","--log-level=warning","--log-limit=0","--format=esm","--platform=node","--tree-shaking=true","--bundle","--outfile=./temp/mod.js","--packages=bundle"],"write":true,"stdinContents":null,"stdinResolveDir":null,"absWorkingDir":"/Users/nathanwhit/Documents/Code/esbuild-at-home","nodePaths":[],"context":false,"plugins":[{"name":"deno","onStart":false,"onEnd":false,"onResolve":[{"id":0,"filter":".*","namespace":"deno"}],"onLoad":[{"id":0,"filter":".*","namespace":"deno"}]},{"name":"test","onStart":false,"onEnd":false,"onResolve":[{"id":1,"filter":".*$","namespace":""}],"onLoad":[{"id":2,"filter":".*$","namespace":""}]}]}}"#,
-        )
-        .unwrap();
+        let input = Packet {
+            id: 0,
+            is_request: true,
+            value: BuildRequest {
+                key: 0,
+                entries: vec![("".to_string(), "./testing.ts".to_string())],
+                flags: vec![
+                    "--color=true".to_string(),
+                    "--log-level=warning".to_string(),
+                    "--log-limit=0".to_string(),
+                    "--format=esm".to_string(),
+                    "--platform=node".to_string(),
+                    "--tree-shaking=true".to_string(),
+                    "--bundle".to_string(),
+                    "--outfile=./temp/mod.js".to_string(),
+                    "--packages=bundle".to_string(),
+                ],
+                write: true,
+                stdin_contents: OptionNull::new(None),
+                stdin_resolve_dir: OptionNull::new(None),
+                abs_working_dir: "/Users/nathanwhit/Documents/Code/esbuild-at-home".to_string(),
+                node_paths: vec![],
+                context: false,
+                plugins: Some(vec![
+                    BuildPlugin {
+                        name: "deno".to_string(),
+                        on_start: false,
+                        on_end: false,
+                        on_resolve: vec![OnResolveSetupOptions {
+                            id: 0,
+                            filter: ".*".to_string(),
+                            namespace: "deno".to_string(),
+                        }],
+                        on_load: vec![OnLoadSetupOptions {
+                            id: 0,
+                            filter: ".*".to_string(),
+                            namespace: "deno".to_string(),
+                        }],
+                    },
+                    BuildPlugin {
+                        name: "test".to_string(),
+                        on_start: false,
+                        on_end: false,
+                        on_resolve: vec![OnResolveSetupOptions {
+                            id: 1,
+                            filter: ".*$".to_string(),
+                            namespace: "".to_string(),
+                        }],
+                        on_load: vec![OnLoadSetupOptions {
+                            id: 2,
+                            filter: ".*$".to_string(),
+                            namespace: "".to_string(),
+                        }],
+                    },
+                ]),
+                mangle_cache: None,
+            },
+        };
         let mut buf = Vec::new();
         input.encode_into(&mut buf);
         eprintln!("buf: {:?}", buf);

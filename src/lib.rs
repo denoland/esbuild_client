@@ -326,20 +326,6 @@ fn load_result_to_response(id: u32, result: Option<OnLoadResult>) -> protocol::O
     }
 }
 
-// pub trait PluginInfo {
-//     fn name(&self) -> &'static str;
-//     fn provides_on_resolve(&self) -> bool {
-//         false
-//     }
-// }
-
-// pub trait Plugin: PluginInfo {
-//     fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError> {
-//         anyhow::bail!("not implemented")
-//     }
-//     // fn on_load(&self)
-// }
-
 #[async_trait(?Send)]
 pub trait PluginHandler {
     async fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError>;
