@@ -1,26 +1,16 @@
-use std::fs;
-use std::path::Path;
-
-use esbuild_rs::{EsbuildFlagsBuilder, EsbuildService, protocol::BuildRequest};
+use esbuild_rs::{EsbuildFlagsBuilder, protocol::BuildRequest};
+use pretty_assertions::assert_eq;
 mod common;
 
-use common::{ESBUILD_VERSION, fetch_esbuild};
+use common::{TestDir, create_esbuild_service};
 
 #[tokio::test]
 async fn test_basic_build() -> Result<(), Box<dyn std::error::Error>> {
-    let esbuild_path = fetch_esbuild();
+    let test_dir = TestDir::new("esbuild_test")?;
+    let input_file = test_dir.create_file("input.js", "console.log('Hello from esbuild!');")?;
+    let output_file = test_dir.path.join("output.js");
 
-    // Create a simple test input file
-    let temp_dir = std::env::temp_dir().join("esbuild_test");
-    fs::create_dir_all(&temp_dir)?;
-
-    let input_file = temp_dir.join("input.js");
-    fs::write(&input_file, "console.log('Hello from esbuild!');")?;
-
-    let output_file = temp_dir.join("output.js");
-
-    // Create esbuild service with no plugin handler
-    let esbuild = EsbuildService::new(esbuild_path, ESBUILD_VERSION, None).await?;
+    let esbuild = create_esbuild_service().await?;
 
     let flags = EsbuildFlagsBuilder::default()
         .bundle(true)
@@ -48,34 +38,26 @@ async fn test_basic_build() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert!(response.output_files.is_some(), "No output files generated");
 
-    // Verify output file exists and has content
-    assert!(output_file.exists(), "Output file was not created");
-    let output_content = fs::read_to_string(&output_file)?;
+    // Check the output files from the response instead of filesystem
+    let output_files = response.output_files.unwrap();
+    assert!(!output_files.is_empty(), "No output files in response");
+
+    let output_content = String::from_utf8(output_files[0].contents.clone())?;
     assert!(
         output_content.contains("Hello from esbuild"),
         "Output doesn't contain expected content"
     );
-
-    // Cleanup
-    fs::remove_dir_all(&temp_dir)?;
 
     Ok(())
 }
 
 #[tokio::test]
 async fn test_build_with_errors() -> Result<(), Box<dyn std::error::Error>> {
-    let esbuild_path = fetch_esbuild();
+    let test_dir = TestDir::new("esbuild_test_errors")?;
+    let input_file = test_dir.create_file("input.js", "console.log('unclosed string")?;
+    let output_file = test_dir.path.join("output.js");
 
-    // Create a test input file with syntax errors
-    let temp_dir = std::env::temp_dir().join("esbuild_test_errors");
-    fs::create_dir_all(&temp_dir)?;
-
-    let input_file = temp_dir.join("input.js");
-    fs::write(&input_file, "console.log('unclosed string")?; // Missing closing quote
-
-    let output_file = temp_dir.join("output.js");
-
-    let esbuild = EsbuildService::new(esbuild_path, ESBUILD_VERSION, None).await?;
+    let esbuild = create_esbuild_service().await?;
 
     let flags = EsbuildFlagsBuilder::default()
         .bundle(true)
@@ -103,8 +85,199 @@ async fn test_build_with_errors() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(response.errors.len(), 1);
     assert_eq!(response.errors[0].text, "Unterminated string literal");
 
-    // Cleanup
-    fs::remove_dir_all(&temp_dir)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_plugin_hook_counting() -> Result<(), Box<dyn std::error::Error>> {
+    use async_trait::async_trait;
+    use esbuild_rs::{
+        BuiltinLoader, OnLoadArgs, OnLoadResult, OnResolveArgs, OnResolveResult, OnStartArgs,
+        OnStartResult, PluginHandler,
+    };
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    struct CountingPluginHandler {
+        on_start_count: AtomicU32,
+        on_resolve_count: AtomicU32,
+        on_load_count: AtomicU32,
+    }
+
+    impl CountingPluginHandler {
+        fn new() -> Self {
+            Self {
+                on_start_count: AtomicU32::new(0),
+                on_resolve_count: AtomicU32::new(0),
+                on_load_count: AtomicU32::new(0),
+            }
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl PluginHandler for CountingPluginHandler {
+        async fn on_start(
+            &self,
+            _args: OnStartArgs,
+        ) -> Result<Option<OnStartResult>, esbuild_rs::AnyError> {
+            self.on_start_count.fetch_add(1, Ordering::Relaxed);
+            Ok(None)
+        }
+
+        async fn on_resolve(
+            &self,
+            args: OnResolveArgs,
+        ) -> Result<Option<OnResolveResult>, esbuild_rs::AnyError> {
+            self.on_resolve_count.fetch_add(1, Ordering::Relaxed);
+
+            // Only handle our custom virtual files
+            if args.path.starts_with("virtual:") {
+                let path = args.path.strip_prefix("virtual:").unwrap();
+                Ok(Some(OnResolveResult {
+                    path: Some(format!("virtual:{}", path)),
+                    namespace: Some("virtual".to_string()),
+                    ..Default::default()
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+
+        async fn on_load(
+            &self,
+            args: OnLoadArgs,
+        ) -> Result<Option<OnLoadResult>, esbuild_rs::AnyError> {
+            self.on_load_count.fetch_add(1, Ordering::Relaxed);
+
+            if args.namespace == "virtual" {
+                let content = match args.path.as_str() {
+                    "virtual:utils.js" => {
+                        r#"
+export function add(a, b) {
+  return a + b;
+}
+
+export function multiply(a, b) {
+  return a * b;
+}
+
+export const PI = 3.14159;
+
+export default function greet(name) {
+  return `Hello, ${name}!`;
+}
+"#
+                    }
+                    "virtual:main.js" => {
+                        r#"
+import greet, { add, PI } from 'virtual:utils.js';
+
+console.log(greet('World'));
+console.log('2 + 3 =', add(2, 3));
+console.log('PI =', PI);
+"#
+                    }
+                    _ => return Ok(None),
+                };
+
+                Ok(Some(OnLoadResult {
+                    contents: Some(content.as_bytes().to_vec()),
+                    loader: Some(BuiltinLoader::Js),
+                    ..Default::default()
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+    }
+
+    let test_dir = TestDir::new("esbuild_plugin_test")?;
+    let input_file = test_dir.create_file("main.js", "import 'virtual:main.js';")?;
+    let output_file = test_dir.path.join("output.js");
+
+    let plugin_handler = Arc::new(CountingPluginHandler::new());
+    let plugin_handler_clone = plugin_handler.clone();
+
+    let esbuild = esbuild_rs::EsbuildService::new(
+        common::fetch_esbuild(),
+        common::ESBUILD_VERSION,
+        plugin_handler_clone,
+    )
+    .await?;
+
+    let flags = EsbuildFlagsBuilder::default()
+        .bundle(true)
+        .minify(false)
+        .build()?
+        .to_flags();
+
+    // Set up plugin configuration
+    let plugin = esbuild_rs::protocol::BuildPlugin {
+        name: "counting-plugin".to_string(),
+        on_start: true,
+        on_end: false,
+        on_resolve: vec![esbuild_rs::protocol::OnResolveSetupOptions {
+            id: 1,
+            filter: "virtual:.*".to_string(),
+            namespace: "".to_string(),
+        }],
+        on_load: vec![esbuild_rs::protocol::OnLoadSetupOptions {
+            id: 2,
+            filter: ".*".to_string(),
+            namespace: "virtual".to_string(),
+        }],
+    };
+
+    let response = esbuild
+        .client()
+        .send_build_request(BuildRequest {
+            entries: vec![(
+                output_file.to_string_lossy().into_owned(),
+                input_file.to_string_lossy().into_owned(),
+            )],
+            flags,
+            plugins: Some(vec![plugin]),
+            ..Default::default()
+        })
+        .await?;
+
+    // Check that build succeeded
+    assert!(
+        response.errors.is_empty(),
+        "Build had errors: {:?}",
+        response.errors
+    );
+
+    // Verify hook call counts
+    let on_start_calls = plugin_handler.on_start_count.load(Ordering::Relaxed);
+    let on_resolve_calls = plugin_handler.on_resolve_count.load(Ordering::Relaxed);
+    let on_load_calls = plugin_handler.on_load_count.load(Ordering::Relaxed);
+
+    println!("Hook call counts:");
+    println!("  on_start: {}", on_start_calls);
+    println!("  on_resolve: {}", on_resolve_calls);
+    println!("  on_load: {}", on_load_calls);
+
+    // Verify that hooks were called
+    assert_eq!(on_start_calls, 1, "on_start should be called at least once");
+    assert_eq!(
+        on_resolve_calls, 2,
+        "on_resolve should be called 2 times for virtual imports"
+    );
+    assert_eq!(
+        on_load_calls, 2,
+        "on_load should be called 2 times for virtual files"
+    );
+
+    // Check that the output contains expected content
+    if let Some(output_files) = response.output_files {
+        assert!(!output_files.is_empty(), "No output files generated");
+        let output_content = String::from_utf8(output_files[0].contents.clone())?;
+        assert!(
+            output_content.contains("Hello") || output_content.contains("add"),
+            "Output should contain content from the virtual modules"
+        );
+    }
 
     Ok(())
 }

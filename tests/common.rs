@@ -1,6 +1,8 @@
 use std::path::PathBuf;
+use std::{fs, io};
 
 use directories::ProjectDirs;
+use esbuild_rs::EsbuildService;
 
 fn base_dir() -> PathBuf {
     let project_dirs =
@@ -82,4 +84,33 @@ pub fn fetch_esbuild() -> PathBuf {
     }
 
     esbuild_bin_path
+}
+
+pub struct TestDir {
+    pub path: PathBuf,
+}
+
+impl TestDir {
+    pub fn new(name: &str) -> io::Result<Self> {
+        let path = std::env::temp_dir().join(name);
+        fs::create_dir_all(&path)?;
+        Ok(TestDir { path })
+    }
+
+    pub fn create_file(&self, name: &str, content: &str) -> io::Result<PathBuf> {
+        let file_path = self.path.join(name);
+        fs::write(&file_path, content)?;
+        Ok(file_path)
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+pub async fn create_esbuild_service() -> Result<EsbuildService, Box<dyn std::error::Error>> {
+    let esbuild_path = fetch_esbuild();
+    Ok(EsbuildService::new(esbuild_path, ESBUILD_VERSION, None).await?)
 }
