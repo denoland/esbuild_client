@@ -89,6 +89,7 @@ pub fn fetch_esbuild() -> PathBuf {
     }
 
     let esbuild_bin_url = npm_package_url();
+    eprintln!("fetching esbuild from: {}", esbuild_bin_url);
     let response = ureq::get(esbuild_bin_url).call().unwrap();
 
     let reader = response.into_body().into_reader();
@@ -100,6 +101,7 @@ pub fn fetch_esbuild() -> PathBuf {
         let path = entry.path().unwrap();
 
         if path == std::path::Path::new("package/bin/esbuild") {
+            eprintln!("extracting esbuild to: {}", esbuild_bin_path.display());
             std::io::copy(
                 &mut entry,
                 &mut std::fs::File::create(&esbuild_bin_path).unwrap(),
