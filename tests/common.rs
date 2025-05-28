@@ -1,8 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::{fs, io};
+use sys_traits::{FsFileLock, OpenOptions};
 
 use directories::ProjectDirs;
 use esbuild_rs::EsbuildService;
+use sys_traits::FsOpen;
+use sys_traits::impls::RealSys;
 
 fn base_dir() -> PathBuf {
     let project_dirs =
@@ -42,15 +45,46 @@ fn npm_package_url() -> String {
     )
 }
 
+struct EsbuildFileLock {
+    file: sys_traits::impls::RealFsFile,
+}
+
+impl Drop for EsbuildFileLock {
+    fn drop(&mut self) {
+        let _ = self.file.fs_file_unlock();
+    }
+}
+
+impl EsbuildFileLock {
+    fn new(access_path: &Path) -> Self {
+        let path = access_path.parent().unwrap().join(".esbuild.lock");
+        let mut options = OpenOptions::new_write();
+        options.create = true;
+        options.read = true;
+        let mut file = RealSys.fs_open(&path, &options).unwrap();
+        file.fs_file_lock(sys_traits::FsFileLockMode::Exclusive)
+            .unwrap();
+        Self { file }
+    }
+}
+
 pub fn fetch_esbuild() -> PathBuf {
     let esbuild_bin_dir = base_dir().join("bin");
+    eprintln!("esbuild_bin_dir: {:?}", esbuild_bin_dir);
+
+    let esbuild_bin_path = esbuild_bin_dir.join("esbuild");
+    eprintln!("esbuild_bin_path: {:?}", esbuild_bin_path);
+    if esbuild_bin_path.exists() {
+        eprintln!("esbuild_bin_path exists");
+        return esbuild_bin_path;
+    }
+
     if !esbuild_bin_dir.exists() {
         std::fs::create_dir_all(&esbuild_bin_dir).unwrap();
     }
-
-    let esbuild_bin_path = esbuild_bin_dir.join("esbuild");
-
+    let _lock = EsbuildFileLock::new(&esbuild_bin_path);
     if esbuild_bin_path.exists() {
+        eprintln!("esbuild_bin_path exists");
         return esbuild_bin_path;
     }
 
@@ -78,6 +112,7 @@ pub fn fetch_esbuild() -> PathBuf {
                 std::fs::set_permissions(&esbuild_bin_path, std::fs::Permissions::from_mode(0o755))
                     .unwrap();
             }
+            eprintln!("esbuild_bin_path created");
 
             break;
         }
@@ -120,5 +155,6 @@ pub async fn create_esbuild_service_with_plugin(
     plugin_handler: impl esbuild_rs::MakePluginHandler,
 ) -> Result<EsbuildService, Box<dyn std::error::Error>> {
     let esbuild_path = fetch_esbuild();
+    eprintln!("fetched esbuild: {:?}", esbuild_path);
     Ok(EsbuildService::new(esbuild_path, ESBUILD_VERSION, plugin_handler).await?)
 }

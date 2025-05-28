@@ -20,3 +20,4 @@ directories = "6.0.0"
 flate2 = "1.1.1"
 tar = "0.4.44"
 ureq = "3.0.11"
+sys_traits = { version = "0.1.14", features = ["libc", "real", "winapi"] }
