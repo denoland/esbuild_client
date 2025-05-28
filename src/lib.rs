@@ -190,6 +190,27 @@ impl<T: PluginHandler + 'static> MakePluginHandler for Arc<T> {
         self
     }
 }
+
+pub struct NoopPluginHandler;
+#[async_trait(?Send)]
+impl PluginHandler for NoopPluginHandler {
+    async fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError> {
+        Ok(None)
+    }
+    async fn on_load(&self, _args: OnLoadArgs) -> Result<Option<OnLoadResult>, AnyError> {
+        Ok(None)
+    }
+    async fn on_start(&self, _args: OnStartArgs) -> Result<Option<OnStartResult>, AnyError> {
+        Ok(None)
+    }
+}
+
+impl MakePluginHandler for Option<()> {
+    fn make_plugin_handler(self, _client: ProtocolClient) -> Arc<dyn PluginHandler> {
+        Arc::new(NoopPluginHandler)
+    }
+}
+
 impl EsbuildService {
     pub async fn new(
         path: impl AsRef<Path>,

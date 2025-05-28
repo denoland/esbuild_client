@@ -198,7 +198,7 @@ pub struct Packet<T> {
     pub value: T,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BuildRequest {
     pub key: u32,
     pub entries: Vec<(String, String)>,
@@ -613,7 +613,7 @@ impl_from_map!(for OnResolveRequest {
     key, ids, path, importer, namespace, #[optional] resolve_dir, kind, #[optional] plugin_data, with
 });
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct OptionNull<T>(Option<T>);
 
 impl<T> OptionNull<T> {
