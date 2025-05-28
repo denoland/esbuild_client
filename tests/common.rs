@@ -110,7 +110,15 @@ impl Drop for TestDir {
     }
 }
 
+#[allow(dead_code)]
 pub async fn create_esbuild_service() -> Result<EsbuildService, Box<dyn std::error::Error>> {
+    create_esbuild_service_with_plugin(None).await
+}
+
+#[allow(dead_code)]
+pub async fn create_esbuild_service_with_plugin(
+    plugin_handler: impl esbuild_rs::MakePluginHandler,
+) -> Result<EsbuildService, Box<dyn std::error::Error>> {
     let esbuild_path = fetch_esbuild();
-    Ok(EsbuildService::new(esbuild_path, ESBUILD_VERSION, None).await?)
+    Ok(EsbuildService::new(esbuild_path, ESBUILD_VERSION, plugin_handler).await?)
 }

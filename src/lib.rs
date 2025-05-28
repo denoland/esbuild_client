@@ -435,7 +435,9 @@ impl PluginHook for OnResolveHook {
     async fn call_handler(
         plugin_handler: Arc<dyn PluginHandler>,
         args: Self::Args,
-    ) -> Result<Option<Self::Result>, AnyError> { plugin_handler.on_resolve(args).await }
+    ) -> Result<Option<Self::Result>, AnyError> {
+        plugin_handler.on_resolve(args).await
+    }
     fn response_from_result(
         id: u32,
         result: Result<Option<Self::Result>, AnyError>,
@@ -477,7 +479,9 @@ impl PluginHook for OnLoadHook {
     async fn call_handler(
         plugin_handler: Arc<dyn PluginHandler>,
         args: Self::Args,
-    ) -> Result<Option<Self::Result>, AnyError> { plugin_handler.on_load(args).await }
+    ) -> Result<Option<Self::Result>, AnyError> {
+        plugin_handler.on_load(args).await
+    }
     fn response_from_result(
         id: u32,
         result: Result<Option<Self::Result>, AnyError>,
@@ -514,7 +518,9 @@ impl PluginHook for OnStartHook {
     async fn call_handler(
         plugin_handler: Arc<dyn PluginHandler>,
         args: Self::Args,
-    ) -> Result<Option<Self::Result>, AnyError> { plugin_handler.on_start(args).await }
+    ) -> Result<Option<Self::Result>, AnyError> {
+        plugin_handler.on_start(args).await
+    }
     fn response_from_result(
         _id: u32,
         result: Result<Option<Self::Result>, AnyError>,
