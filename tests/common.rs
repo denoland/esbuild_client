@@ -100,6 +100,7 @@ pub fn fetch_esbuild() -> PathBuf {
         let mut entry = entry.unwrap();
         let path = entry.path().unwrap();
 
+        eprintln!("on entry: {:?}", path);
         if path == std::path::Path::new("package/bin/esbuild") {
             eprintln!("extracting esbuild to: {}", esbuild_bin_path.display());
             std::io::copy(
