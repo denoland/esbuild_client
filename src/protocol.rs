@@ -397,13 +397,15 @@ pub struct OnEndRequest {
     pub write_to_stdout: Option<Vec<u8>>,
 }
 
-impl_encode_struct!(for OnEndRequest { errors, warnings, output_files, metafile, mangle_cache, write_to_stdout });
+protocol_impls!(for OnEndRequest { errors, warnings, #[optional] output_files, #[optional] metafile, #[optional] mangle_cache, #[optional] write_to_stdout });
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct OnEndResponse {
     pub errors: Vec<Message>,
     pub warnings: Vec<Message>,
 }
+
+impl_encode_struct!(for OnEndResponse { errors, warnings });
 
 #[derive(Debug, Clone)]
 pub struct BuildOutputFile {
@@ -435,6 +437,8 @@ pub struct RebuildResponse {
     pub errors: Vec<Message>,
     pub warnings: Vec<Message>,
 }
+
+protocol_impls!(for RebuildResponse { errors, warnings });
 
 #[derive(Debug, Clone)]
 pub struct DisposeRequest {
@@ -746,8 +750,8 @@ pub enum AnyRequest {
     // Serve(ServeRequest),
     // OnEnd(OnEndRequest),
     // Ping(PingRequest),
-    // Rebuild(RebuildRequest),
-    // Dispose(DisposeRequest),
+    Rebuild(RebuildRequest),
+    Dispose(DisposeRequest),
     // Cancel(CancelRequest),
     // Watch(WatchRequest),
     // OnServe(OnServeRequest),
@@ -763,6 +767,8 @@ pub enum AnyRequest {
 #[derive(Debug)]
 pub enum RequestKind {
     Build(oneshot::Sender<BuildResponse>),
+    Dispose(oneshot::Sender<()>),
+    Rebuild(oneshot::Sender<RebuildResponse>),
 }
 
 #[derive(Debug, Clone)]

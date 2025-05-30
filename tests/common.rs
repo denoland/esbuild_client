@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Once;
 use std::{fs, io};
 use sys_traits::{FsFileLock, OpenOptions};
 
@@ -69,6 +70,11 @@ impl EsbuildFileLock {
 }
 
 pub fn fetch_esbuild() -> PathBuf {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        pretty_env_logger::init();
+    });
+
     let esbuild_bin_dir = base_dir().join("bin");
     eprintln!("esbuild_bin_dir: {:?}", esbuild_bin_dir);
 
@@ -163,7 +169,11 @@ pub async fn create_esbuild_service() -> Result<EsbuildService, Box<dyn std::err
 pub async fn create_esbuild_service_with_plugin(
     plugin_handler: impl esbuild_rs::MakePluginHandler,
 ) -> Result<EsbuildService, Box<dyn std::error::Error>> {
-    let esbuild_path = fetch_esbuild();
+    let esbuild_path = if std::env::var("ESBUILD_PATH").is_ok() {
+        PathBuf::from(std::env::var("ESBUILD_PATH").unwrap())
+    } else {
+        fetch_esbuild()
+    };
     eprintln!("fetched esbuild: {:?}", esbuild_path);
     Ok(EsbuildService::new(esbuild_path, ESBUILD_VERSION, plugin_handler).await?)
 }
