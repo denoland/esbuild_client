@@ -3,6 +3,8 @@ name = "esbuild_rs"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+description = "A Rust implementation of a client for communicating with esbuild's service API over stdio"
+repository = "https://github.com/denoland/esbuild_rs"
 
 [dependencies]
 anyhow = "1.0.98"
