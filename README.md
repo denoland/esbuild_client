@@ -1,4 +1,4 @@
-# esbuild_rs
+# esbuild_client
 
 A Rust implementation of a client for communicating with esbuild's service API
 over stdio. This project implements the binary protocol used by esbuild to
@@ -9,13 +9,13 @@ encode and decode messages between the client and the service.
 Create an `EsbuildService`, and send a build request:
 
 ```rust
-use esbuild_rs::{EsbuildFlagsBuilder, EsbuildService, protocol::BuildRequest};
+use esbuild_client::{EsbuildFlagsBuilder, EsbuildService, protocol::BuildRequest};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // using a no-op plugin handler
-    let esbuild = esbuild_rs::EsbuildService::new("/path/to/esbuild/binary", "0.25.5", None);
-    let flags = esbuild_rs::EsbuildFlagsBuilder::default()
+    let esbuild = esbuild_client::EsbuildService::new("/path/to/esbuild/binary", "0.25.5", None);
+    let flags = esbuild_client::EsbuildFlagsBuilder::default()
         .bundle(true)
         .minify(true)
         .format(esbuild::Format::Esm)
@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response = esbuild
         .client()
-        .send_build_request(esbuild_rs::protocol::BuildRequest {
+        .send_build_request(esbuild_client::protocol::BuildRequest {
             entries: vec![("output.js".into(), "input.js".into())],
             flags,
             ..Default::default()
@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 Custom plugin handling:
 
 ```rust
-use esbuild_rs::{EsbuildFlagsBuilder, EsbuildService, PluginHandler, protocol::BuildRequest};
+use esbuild_client::{EsbuildFlagsBuilder, EsbuildService, PluginHandler, protocol::BuildRequest};
 
 struct MyPluginHandler;
 #[async_trait::async_trait(?Send)]
@@ -60,12 +60,12 @@ impl PluginHandler for MyPluginHandler {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let esbuild = esbuild_rs::EsbuildService::new(
+    let esbuild = esbuild_client::EsbuildService::new(
         "/path/to/esbuild/binary",
         "0.25.5",
         Arc::new(MyPluginHandler),
     );
-    let flags = esbuild_rs::EsbuildFlagsBuilder::default()
+    let flags = esbuild_client::EsbuildFlagsBuilder::default()
         .bundle(true)
         .minify(true)
         .format(esbuild::Format::Esm)
@@ -74,17 +74,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let response = esbuild
         .client()
-        .send_build_request(esbuild_rs::protocol::BuildRequest {
+        .send_build_request(esbuild_client::protocol::BuildRequest {
             entries: vec![("output.js".into(), "input.js".into())],
             flags,
-            plugins: Some(vec![esbuild_rs::protocol::BuildPlugin {
+            plugins: Some(vec![esbuild_client::protocol::BuildPlugin {
                 name: "my-plugin".into(),
-                on_resolve: vec![esbuild_rs::protocol::OnResolveSetupOptions {
+                on_resolve: vec![esbuild_client::protocol::OnResolveSetupOptions {
                     id: 0,
                     filter: ".*".into(),
                     namespace: "my-plugin".into(),
                 }],
-                on_load: vec![esbuild_rs::protocol::OnLoadSetupOptions {
+                on_load: vec![esbuild_client::protocol::OnLoadSetupOptions {
                     id: 0,
                     filter: ".*".into(),
                     namespace: "my-plugin".into(),
