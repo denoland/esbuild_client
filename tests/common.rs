@@ -3,13 +3,17 @@ use std::{fs, io};
 use sys_traits::{FsFileLock, OpenOptions};
 
 use directories::ProjectDirs;
-use esbuild_rs::EsbuildService;
+use esbuild_client::EsbuildService;
 use sys_traits::FsOpen;
 use sys_traits::impls::RealSys;
 
 fn base_dir() -> PathBuf {
-    let project_dirs =
-        ProjectDirs::from("esbuild_rs_test", "esbuild_rs_test", "esbuild_rs_test").unwrap();
+    let project_dirs = ProjectDirs::from(
+        "esbuild_client_test",
+        "esbuild_client_test",
+        "esbuild_client_test",
+    )
+    .unwrap();
     project_dirs.cache_dir().to_path_buf()
 }
 
@@ -161,7 +165,7 @@ pub async fn create_esbuild_service() -> Result<EsbuildService, Box<dyn std::err
 
 #[allow(dead_code)]
 pub async fn create_esbuild_service_with_plugin(
-    plugin_handler: impl esbuild_rs::MakePluginHandler,
+    plugin_handler: impl esbuild_client::MakePluginHandler,
 ) -> Result<EsbuildService, Box<dyn std::error::Error>> {
     let esbuild_path = fetch_esbuild();
     eprintln!("fetched esbuild: {:?}", esbuild_path);

@@ -1,6 +1,6 @@
 mod common;
 use common::*;
-use esbuild_rs::{EsbuildFlagsBuilder, protocol::BuildRequest};
+use esbuild_client::{EsbuildFlagsBuilder, protocol::BuildRequest};
 
 #[tokio::test]
 async fn test_build_with_errors() -> Result<(), Box<dyn std::error::Error>> {

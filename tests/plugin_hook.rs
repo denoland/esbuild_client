@@ -1,12 +1,12 @@
 mod common;
 use common::*;
-use esbuild_rs::{EsbuildFlagsBuilder, protocol::BuildRequest};
+use esbuild_client::{EsbuildFlagsBuilder, protocol::BuildRequest};
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
 async fn test_plugin_hook_counting() -> Result<(), Box<dyn std::error::Error>> {
     use async_trait::async_trait;
-    use esbuild_rs::{
+    use esbuild_client::{
         BuiltinLoader, OnLoadArgs, OnLoadResult, OnResolveArgs, OnResolveResult, OnStartArgs,
         OnStartResult, PluginHandler,
     };
@@ -34,7 +34,7 @@ async fn test_plugin_hook_counting() -> Result<(), Box<dyn std::error::Error>> {
         async fn on_start(
             &self,
             _args: OnStartArgs,
-        ) -> Result<Option<OnStartResult>, esbuild_rs::AnyError> {
+        ) -> Result<Option<OnStartResult>, esbuild_client::AnyError> {
             self.on_start_count.fetch_add(1, Ordering::Relaxed);
             Ok(None)
         }
@@ -42,7 +42,7 @@ async fn test_plugin_hook_counting() -> Result<(), Box<dyn std::error::Error>> {
         async fn on_resolve(
             &self,
             args: OnResolveArgs,
-        ) -> Result<Option<OnResolveResult>, esbuild_rs::AnyError> {
+        ) -> Result<Option<OnResolveResult>, esbuild_client::AnyError> {
             self.on_resolve_count.fetch_add(1, Ordering::Relaxed);
 
             // Only handle our custom virtual files
@@ -61,7 +61,7 @@ async fn test_plugin_hook_counting() -> Result<(), Box<dyn std::error::Error>> {
         async fn on_load(
             &self,
             args: OnLoadArgs,
-        ) -> Result<Option<OnLoadResult>, esbuild_rs::AnyError> {
+        ) -> Result<Option<OnLoadResult>, esbuild_client::AnyError> {
             self.on_load_count.fetch_add(1, Ordering::Relaxed);
 
             if args.namespace == "virtual" {
@@ -112,7 +112,7 @@ console.log('PI =', PI);
 
     let plugin_handler = Arc::new(CountingPluginHandler::new());
 
-    let esbuild = esbuild_rs::EsbuildService::new(
+    let esbuild = esbuild_client::EsbuildService::new(
         common::fetch_esbuild(),
         common::ESBUILD_VERSION,
         plugin_handler.clone(),
@@ -126,16 +126,16 @@ console.log('PI =', PI);
         .to_flags();
 
     // Set up plugin configuration
-    let plugin = esbuild_rs::protocol::BuildPlugin {
+    let plugin = esbuild_client::protocol::BuildPlugin {
         name: "counting-plugin".to_string(),
         on_start: true,
         on_end: false,
-        on_resolve: vec![esbuild_rs::protocol::OnResolveSetupOptions {
+        on_resolve: vec![esbuild_client::protocol::OnResolveSetupOptions {
             id: 1,
             filter: "virtual:.*".to_string(),
             namespace: "".to_string(),
         }],
-        on_load: vec![esbuild_rs::protocol::OnLoadSetupOptions {
+        on_load: vec![esbuild_client::protocol::OnLoadSetupOptions {
             id: 2,
             filter: ".*".to_string(),
             namespace: "virtual".to_string(),

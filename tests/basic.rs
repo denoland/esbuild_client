@@ -1,4 +1,4 @@
-use esbuild_rs::{EsbuildFlagsBuilder, protocol::BuildRequest};
+use esbuild_client::{EsbuildFlagsBuilder, protocol::BuildRequest};
 mod common;
 
 use common::{TestDir, create_esbuild_service};
