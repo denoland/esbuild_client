@@ -165,7 +165,6 @@ console.log('PI =', PI);
                 input_file.to_string_lossy().into_owned(),
             )],
             flags,
-            context: true,
             plugins: Some(vec![plugin]),
             ..Default::default()
         })

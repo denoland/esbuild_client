@@ -746,7 +746,7 @@ impl_encode_struct!(for OnLoadResponse {
 
 #[derive(Debug, Clone)]
 pub enum AnyRequest {
-    Build(BuildRequest),
+    Build(Box<BuildRequest>),
     // Serve(ServeRequest),
     // OnEnd(OnEndRequest),
     // Ping(PingRequest),

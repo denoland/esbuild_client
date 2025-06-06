@@ -772,7 +772,7 @@ impl ProtocolClientInner {
         let packet = protocol::ProtocolPacket {
             id,
             is_request: true,
-            value: protocol::ProtocolMessage::Request(protocol::AnyRequest::Build(req)),
+            value: protocol::ProtocolMessage::Request(protocol::AnyRequest::Build(Box::new(req))),
         };
         let (tx, rx) = oneshot::channel();
         self.pending
@@ -797,8 +797,8 @@ impl ProtocolClientInner {
             .lock()
             .insert(id, protocol::RequestKind::Dispose(tx));
         self.response_tx.send(packet).await?;
-        let response = rx.await?;
-        Ok(response)
+        rx.await?;
+        Ok(())
     }
 
     pub async fn send_rebuild_request(

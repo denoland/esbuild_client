@@ -1,5 +1,5 @@
 mod common;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Error as AnyError;
 use common::*;
@@ -10,7 +10,8 @@ use esbuild_rs::{
 };
 
 struct ContextPluginHandler {
-    context: String,
+    // context: String,
+    result: Arc<Mutex<Option<OnEndArgs>>>,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -20,7 +21,7 @@ impl PluginHandler for ContextPluginHandler {
     }
 
     async fn on_end(&self, args: OnEndArgs) -> Result<Option<OnEndResult>, AnyError> {
-        eprintln!("context: {:?}", args);
+        *self.result.lock().unwrap() = Some(args);
         Ok(None)
     }
 
@@ -39,8 +40,11 @@ async fn context_simple() -> Result<(), Box<dyn std::error::Error>> {
     let input_file = test_dir.create_file("input.js", "console.log('Hello from esbuild!');")?;
     let output_file = test_dir.path.join("output.js");
 
+    let result = Arc::new(Mutex::new(None));
+
     let esbuild = create_esbuild_service_with_plugin(Arc::new(ContextPluginHandler {
-        context: "test".to_string(),
+        // context: "test".to_string(),
+        result: result.clone(),
     }))
     .await?;
 
@@ -78,14 +82,14 @@ async fn context_simple() -> Result<(), Box<dyn std::error::Error>> {
     assert!(response.errors.is_empty());
     assert!(response.warnings.is_empty());
 
-    // assert!(response.output_files.is_some());
+    let result = result.lock().unwrap().take().unwrap();
+    assert!(result.output_files.is_some());
 
-    // let output_files = response.output_files.unwrap();
-    // assert!(!output_files.is_empty());
+    let output_files = result.output_files.unwrap();
+    assert!(!output_files.is_empty());
 
-    // let output_content = String::from_utf8(output_files[0].contents.clone())?;
-    // assert!(output_content.contains("Hello from esbuild!"));
-    //
+    let output_content = String::from_utf8(output_files[0].contents.clone())?;
+    assert!(output_content.contains("Hello from esbuild!"));
 
     esbuild.client().send_dispose_request(1).await?;
 
