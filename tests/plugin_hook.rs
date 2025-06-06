@@ -110,7 +110,7 @@ console.log('PI =', PI);
         async fn on_end(
             &self,
             _args: OnEndArgs,
-        ) -> Result<Option<OnEndResult>, esbuild_rs::AnyError> {
+        ) -> Result<Option<OnEndResult>, esbuild_client::AnyError> {
             self.on_end_count.fetch_add(1, Ordering::Relaxed);
             Ok(Some(OnEndResult {
                 errors: None,

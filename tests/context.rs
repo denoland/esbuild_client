@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Error as AnyError;
 use common::*;
-use esbuild_rs::{
+use esbuild_client::{
     EsbuildFlagsBuilder, OnEndArgs, OnEndResult, OnLoadArgs, OnLoadResult, OnResolveArgs,
     OnResolveResult, OnStartArgs, OnStartResult, PluginHandler,
     protocol::{BuildPlugin, BuildRequest},
