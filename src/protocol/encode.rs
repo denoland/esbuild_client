@@ -230,6 +230,8 @@ impl Encode for AnyRequest {
     fn encode_into(&self, buf: &mut Vec<u8>) {
         match self {
             AnyRequest::Build(build) => build.encode_into(buf),
+            AnyRequest::Dispose(dispose) => dispose.encode_into(buf),
+            AnyRequest::Rebuild(rebuild) => rebuild.encode_into(buf),
             // AnyRequest::Import(import) => import.encode_into(buf),
         }
     }
@@ -241,8 +243,8 @@ impl Encode for AnyResponse {
         match self {
             AnyResponse::Build(build_response) => todo!(),
             AnyResponse::Serve(serve_response) => todo!(),
-            AnyResponse::OnEnd(on_end_response) => todo!(),
-            AnyResponse::Rebuild(rebuild_response) => todo!(),
+            AnyResponse::OnEnd(on_end_response) => on_end_response.encode_into(buf),
+            AnyResponse::Rebuild(rebuild_response) => rebuild_response.encode_into(buf),
             AnyResponse::Transform(transform_response) => todo!(),
             AnyResponse::FormatMsgs(format_msgs_response) => todo!(),
             AnyResponse::AnalyzeMetafile(analyze_metafile_response) => todo!(),
@@ -257,12 +259,15 @@ impl Encode for AnyResponse {
 impl Encode for ProtocolPacket {
     fn encode_into(&self, buf: &mut Vec<u8>) {
         let idx = buf.len();
+        log::trace!("encoding packet: {self:?}");
         buf.extend(std::iter::repeat_n(0, 4));
         // eprintln!("tag: {}", (self.id << 1) | !self.is_request as u32);
         // eprintln!("len: {}", buf.len());
         encode_u32_raw(buf, (self.id << 1) | !self.is_request as u32);
         // eprintln!("encoding packet: {buf:?}");
+        log::trace!("encoding value: {self:?}");
         self.value.encode_into(buf);
+        log::trace!("encoded value: {self:?}");
         let end: u32 = buf.len() as u32;
         let len: u32 = end - (idx as u32) - 4;
         // eprintln!("len: {len}");

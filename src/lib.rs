@@ -140,9 +140,7 @@ async fn protocol_task(
                 log::trace!("got send packet from receiver: {packet:?}");
                 let mut encoded = Vec::new();
                 packet.encode_into(&mut encoded);
-                // eprintln!("encoded: {:?}", encoded);
                 stdin.write_all(&encoded).await?;
-                // eprintln!("wrote packet");
             }
             read_length = stdout.read(&mut state.buffer[state.read_into_offset..]) => {
                 let Ok(read_length) = read_length else {
@@ -203,6 +201,9 @@ impl PluginHandler for NoopPluginHandler {
     async fn on_start(&self, _args: OnStartArgs) -> Result<Option<OnStartResult>, AnyError> {
         Ok(None)
     }
+    async fn on_end(&self, _args: OnEndArgs) -> Result<Option<OnEndResult>, AnyError> {
+        Ok(None)
+    }
 }
 
 impl MakePluginHandler for Option<()> {
@@ -252,14 +253,16 @@ impl EsbuildService {
         deno_unsync::spawn(async move {
             loop {
                 let packet = packet_rx.recv().await;
-                // eprintln!("got packet from receiver: {packet:?}");
 
+                log::trace!("got packet from receiver: {packet:?}");
                 if let Some(packet) = packet {
                     let _ = handle_packet(packet, &response_tx, plugin_handler.clone(), &pending)
                         .await
                         .inspect_err(|err| {
                             eprintln!("failed to handle packet {err}");
                         });
+                } else {
+                    break;
                 }
             }
         });
@@ -352,6 +355,7 @@ pub trait PluginHandler {
     async fn on_resolve(&self, _args: OnResolveArgs) -> Result<Option<OnResolveResult>, AnyError>;
     async fn on_load(&self, _args: OnLoadArgs) -> Result<Option<OnLoadResult>, AnyError>;
     async fn on_start(&self, _args: OnStartArgs) -> Result<Option<OnStartResult>, AnyError>;
+    async fn on_end(&self, _args: OnEndArgs) -> Result<Option<OnEndResult>, AnyError>;
 }
 
 #[derive(Default)]
@@ -545,6 +549,65 @@ impl From<protocol::OnStartRequest> for OnStartArgs {
     }
 }
 
+#[derive(Debug)]
+pub struct OnEndArgs {
+    pub errors: Vec<protocol::Message>,
+    pub warnings: Vec<protocol::Message>,
+    pub output_files: Option<Vec<protocol::BuildOutputFile>>,
+    pub metafile: Option<String>,
+    pub mangle_cache: Option<IndexMap<String, protocol::MangleCacheEntry>>,
+    pub write_to_stdout: Option<Vec<u8>>,
+}
+
+struct OnEndHook;
+impl PluginHook for OnEndHook {
+    type Request = protocol::OnEndRequest;
+    type Response = protocol::OnEndResponse;
+    type Args = OnEndArgs;
+    type Result = OnEndResult;
+    async fn call_handler(
+        plugin_handler: Arc<dyn PluginHandler>,
+        args: Self::Args,
+    ) -> Result<Option<Self::Result>, AnyError> {
+        plugin_handler.on_end(args).await
+    }
+    fn response_from_result(
+        _id: u32,
+        _result: Result<Option<Self::Result>, AnyError>,
+    ) -> Self::Response {
+        match _result {
+            Ok(Some(result)) => protocol::OnEndResponse {
+                errors: result.errors.unwrap_or_default(),
+                warnings: result.warnings.unwrap_or_default(),
+            },
+            Ok(None) => protocol::OnEndResponse::default(),
+            Err(e) => {
+                log::debug!("error calling on-end: {}", e);
+                protocol::OnEndResponse::default()
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct OnEndResult {
+    pub errors: Option<Vec<protocol::Message>>,
+    pub warnings: Option<Vec<protocol::Message>>,
+}
+
+impl From<protocol::OnEndRequest> for OnEndArgs {
+    fn from(value: protocol::OnEndRequest) -> Self {
+        OnEndArgs {
+            errors: value.errors,
+            warnings: value.warnings,
+            output_files: value.output_files,
+            metafile: value.metafile,
+            mangle_cache: value.mangle_cache,
+            write_to_stdout: value.write_to_stdout,
+        }
+    }
+}
+
 async fn handle_hook<H: PluginHook>(
     id: u32,
     request: H::Request,
@@ -623,6 +686,15 @@ async fn handle_packet(
                             )?;
                             Ok(())
                         }
+                        "on-end" => {
+                            spawn_hook::<OnEndHook>(
+                                packet.id,
+                                index_map,
+                                response_tx,
+                                plugin_handler,
+                            )?;
+                            Ok(())
+                        }
                         _ => {
                             todo!("handle: {:?}", packet.value)
                         }
@@ -639,6 +711,14 @@ async fn handle_packet(
                         let build_response =
                             protocol::BuildResponse::from_any_value(packet.value.clone())?;
                         let _ = tx.send(build_response);
+                    }
+                    protocol::RequestKind::Dispose(tx) => {
+                        let _ = tx.send(());
+                    }
+                    protocol::RequestKind::Rebuild(tx) => {
+                        let rebuild_response =
+                            protocol::RebuildResponse::from_any_value(packet.value.clone())?;
+                        let _ = tx.send(rebuild_response);
                     }
                 }
 
@@ -692,12 +772,51 @@ impl ProtocolClientInner {
         let packet = protocol::ProtocolPacket {
             id,
             is_request: true,
-            value: protocol::ProtocolMessage::Request(protocol::AnyRequest::Build(req)),
+            value: protocol::ProtocolMessage::Request(protocol::AnyRequest::Build(Box::new(req))),
         };
         let (tx, rx) = oneshot::channel();
         self.pending
             .lock()
             .insert(id, protocol::RequestKind::Build(tx));
+        self.response_tx.send(packet).await?;
+        let response = rx.await?;
+        Ok(response)
+    }
+
+    pub async fn send_dispose_request(&self, key: u32) -> Result<(), AnyError> {
+        let id = self.id.fetch_add(1, Ordering::Relaxed);
+        let packet = protocol::ProtocolPacket {
+            id,
+            is_request: true,
+            value: protocol::ProtocolMessage::Request(protocol::AnyRequest::Dispose(
+                protocol::DisposeRequest { key },
+            )),
+        };
+        let (tx, rx) = oneshot::channel();
+        self.pending
+            .lock()
+            .insert(id, protocol::RequestKind::Dispose(tx));
+        self.response_tx.send(packet).await?;
+        rx.await?;
+        Ok(())
+    }
+
+    pub async fn send_rebuild_request(
+        &self,
+        key: u32,
+    ) -> Result<protocol::RebuildResponse, AnyError> {
+        let id = self.id.fetch_add(1, Ordering::Relaxed);
+        let packet = protocol::ProtocolPacket {
+            id,
+            is_request: true,
+            value: protocol::ProtocolMessage::Request(protocol::AnyRequest::Rebuild(
+                protocol::RebuildRequest { key },
+            )),
+        };
+        let (tx, rx) = oneshot::channel();
+        self.pending
+            .lock()
+            .insert(id, protocol::RequestKind::Rebuild(tx));
         self.response_tx.send(packet).await?;
         let response = rx.await?;
         Ok(response)
@@ -775,6 +894,7 @@ pub struct EsbuildFlags {
     external: Option<Vec<String>>,
     minify: Option<bool>,
     splitting: Option<bool>,
+    metafile: Option<bool>,
 }
 fn default<T: Default>() -> T {
     T::default()
@@ -799,6 +919,7 @@ impl Default for EsbuildFlags {
             external: default(),
             minify: default(),
             splitting: default(),
+            metafile: default(),
         }
     }
 }
@@ -923,7 +1044,11 @@ impl EsbuildFlags {
                 flags.push("--splitting".to_string());
             }
         }
-
+        if let Some(metafile) = self.metafile {
+            if metafile {
+                flags.push("--metafile".to_string());
+            }
+        }
         flags
     }
 }
