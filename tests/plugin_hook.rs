@@ -1,6 +1,6 @@
 mod common;
 use common::*;
-use esbuild_client::{EsbuildFlagsBuilder, protocol::BuildRequest};
+use esbuild_client::{EsbuildFlagsBuilder, OnEndArgs, OnEndResult, protocol::BuildRequest};
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -17,6 +17,7 @@ async fn test_plugin_hook_counting() -> Result<(), Box<dyn std::error::Error>> {
         on_start_count: AtomicU32,
         on_resolve_count: AtomicU32,
         on_load_count: AtomicU32,
+        on_end_count: AtomicU32,
     }
 
     impl CountingPluginHandler {
@@ -25,6 +26,7 @@ async fn test_plugin_hook_counting() -> Result<(), Box<dyn std::error::Error>> {
                 on_start_count: AtomicU32::new(0),
                 on_resolve_count: AtomicU32::new(0),
                 on_load_count: AtomicU32::new(0),
+                on_end_count: AtomicU32::new(0),
             }
         }
     }
@@ -104,6 +106,17 @@ console.log('PI =', PI);
                 Ok(None)
             }
         }
+
+        async fn on_end(
+            &self,
+            _args: OnEndArgs,
+        ) -> Result<Option<OnEndResult>, esbuild_client::AnyError> {
+            self.on_end_count.fetch_add(1, Ordering::Relaxed);
+            Ok(Some(OnEndResult {
+                errors: None,
+                warnings: None,
+            }))
+        }
     }
 
     let test_dir = TestDir::new("esbuild_plugin_test")?;
@@ -119,7 +132,7 @@ console.log('PI =', PI);
     )
     .await?;
 
-    let flags = EsbuildFlagsBuilder::default()
+    let mut flags = EsbuildFlagsBuilder::default()
         .bundle(true)
         .minify(false)
         .build()?
@@ -129,7 +142,7 @@ console.log('PI =', PI);
     let plugin = esbuild_client::protocol::BuildPlugin {
         name: "counting-plugin".to_string(),
         on_start: true,
-        on_end: false,
+        on_end: true,
         on_resolve: vec![esbuild_client::protocol::OnResolveSetupOptions {
             id: 1,
             filter: "virtual:.*".to_string(),
@@ -141,6 +154,8 @@ console.log('PI =', PI);
             namespace: "virtual".to_string(),
         }],
     };
+
+    flags.push("--metafile".to_string());
 
     let response = esbuild
         .client()
@@ -166,11 +181,13 @@ console.log('PI =', PI);
     let on_start_calls = plugin_handler.on_start_count.load(Ordering::Relaxed);
     let on_resolve_calls = plugin_handler.on_resolve_count.load(Ordering::Relaxed);
     let on_load_calls = plugin_handler.on_load_count.load(Ordering::Relaxed);
+    let on_end_calls = plugin_handler.on_end_count.load(Ordering::Relaxed);
 
     println!("Hook call counts:");
     println!("  on_start: {}", on_start_calls);
     println!("  on_resolve: {}", on_resolve_calls);
     println!("  on_load: {}", on_load_calls);
+    println!("  on_end: {}", on_end_calls);
 
     // Verify that hooks were called
     assert_eq!(on_start_calls, 1, "on_start should be called at least once");
@@ -182,6 +199,7 @@ console.log('PI =', PI);
         on_load_calls, 2,
         "on_load should be called 2 times for virtual files"
     );
+    // assert_eq!(on_end_calls, 1, "on_end should be called once");
 
     // Check that the output contains expected content
     if let Some(output_files) = response.output_files {
