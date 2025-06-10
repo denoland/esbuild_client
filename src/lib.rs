@@ -895,6 +895,7 @@ pub struct EsbuildFlags {
     minify: Option<bool>,
     splitting: Option<bool>,
     metafile: Option<bool>,
+    sourcemap: Option<Sourcemap>,
 }
 fn default<T: Default>() -> T {
     T::default()
@@ -920,6 +921,7 @@ impl Default for EsbuildFlags {
             minify: default(),
             splitting: default(),
             metafile: default(),
+            sourcemap: default(),
         }
     }
 }
@@ -981,6 +983,25 @@ impl Display for BuiltinLoader {
             BuiltinLoader::Binary => write!(f, "binary"),
             BuiltinLoader::Copy => write!(f, "copy"),
             BuiltinLoader::Empty => write!(f, "empty"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Copy)]
+pub enum Sourcemap {
+    Linked,
+    External,
+    Inline,
+    Both,
+}
+
+impl Display for Sourcemap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Sourcemap::Linked => write!(f, "linked"),
+            Sourcemap::External => write!(f, "external"),
+            Sourcemap::Inline => write!(f, "inline"),
+            Sourcemap::Both => write!(f, "both"),
         }
     }
 }
@@ -1048,6 +1069,9 @@ impl EsbuildFlags {
             if metafile {
                 flags.push("--metafile".to_string());
             }
+        }
+        if let Some(sourcemap) = self.sourcemap {
+            flags.push(format!("--sourcemap={}", sourcemap));
         }
         flags
     }
