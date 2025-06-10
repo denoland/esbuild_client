@@ -1076,3 +1076,50 @@ impl EsbuildFlags {
         flags
     }
 }
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+pub struct Metafile {
+    pub inputs: HashMap<String, MetafileInput>,
+    pub outputs: HashMap<String, MetafileOutput>,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+pub struct MetafileInput {
+    pub bytes: u64,
+    pub imports: Vec<MetafileInputImport>,
+    pub format: Option<String>,
+    pub with: Option<HashMap<String, String>>,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+pub struct MetafileInputImport {
+    pub path: String,
+    pub kind: String,
+    pub external: Option<bool>,
+    pub original: Option<String>,
+    pub with: Option<HashMap<String, String>>,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct MetafileOutput {
+    pub bytes: u64,
+    pub inputs: HashMap<String, MetafileOutputInput>,
+    pub imports: Vec<MetafileOutputImport>,
+    pub exports: Vec<String>,
+    pub entry_point: Option<String>,
+    pub css_bundle: Option<String>,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct MetafileOutputInput {
+    pub bytes_in_output: u64,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+pub struct MetafileOutputImport {
+    pub path: String,
+    pub kind: String,
+    pub external: Option<bool>,
+}
