@@ -252,11 +252,11 @@ pub struct PartialMessage {
     pub plugin_name: String,
     pub text: String,
     pub location: Option<Location>,
-    pub notes: Option<Vec<Note>>,
-    pub detail: Option<AnyValue>,
+    pub notes: Vec<Note>,
+    pub detail: u32,
 }
 
-protocol_impls!(for PartialMessage { id, plugin_name, text, #[optional] location, #[optional] notes, #[optional] detail });
+protocol_impls!(for PartialMessage { id, plugin_name, text, #[optional] location, notes, detail });
 
 #[derive(Debug, Clone)]
 pub struct ServeOnRequestArgs {
