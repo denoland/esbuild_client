@@ -4,7 +4,7 @@ use std::{fs, io};
 use sys_traits::{FsFileLock, OpenOptions};
 
 use directories::ProjectDirs;
-use esbuild_client::EsbuildService;
+use esbuild_client::{EsbuildService, EsbuildServiceOptions};
 use sys_traits::FsOpen;
 use sys_traits::impls::RealSys;
 
@@ -165,12 +165,15 @@ impl Drop for TestDir {
 }
 
 #[allow(dead_code)]
-pub async fn create_esbuild_service() -> Result<EsbuildService, Box<dyn std::error::Error>> {
-    create_esbuild_service_with_plugin(None).await
+pub async fn create_esbuild_service(
+    test_dir: &TestDir,
+) -> Result<EsbuildService, Box<dyn std::error::Error>> {
+    create_esbuild_service_with_plugin(test_dir, None).await
 }
 
 #[allow(dead_code)]
 pub async fn create_esbuild_service_with_plugin(
+    test_dir: &TestDir,
     plugin_handler: impl esbuild_client::MakePluginHandler,
 ) -> Result<EsbuildService, Box<dyn std::error::Error>> {
     let esbuild_path = if std::env::var("ESBUILD_PATH").is_ok() {
@@ -179,5 +182,13 @@ pub async fn create_esbuild_service_with_plugin(
         fetch_esbuild()
     };
     eprintln!("fetched esbuild: {:?}", esbuild_path);
-    Ok(EsbuildService::new(esbuild_path, ESBUILD_VERSION, plugin_handler).await?)
+    Ok(EsbuildService::new(
+        esbuild_path,
+        ESBUILD_VERSION,
+        plugin_handler,
+        EsbuildServiceOptions {
+            cwd: Some(&test_dir.path),
+        },
+    )
+    .await?)
 }

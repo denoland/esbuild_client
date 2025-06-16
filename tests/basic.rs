@@ -5,11 +5,11 @@ use common::{TestDir, create_esbuild_service};
 
 #[tokio::test]
 async fn test_basic_build() -> Result<(), Box<dyn std::error::Error>> {
-    let test_dir = TestDir::new("esbuild_test")?;
+    let test_dir = TestDir::new("esbuild_test_basic")?;
     let input_file = test_dir.create_file("input.js", "console.log('Hello from esbuild!');")?;
     let output_file = test_dir.path.join("output.js");
 
-    let esbuild = create_esbuild_service().await?;
+    let esbuild = create_esbuild_service(&test_dir).await?;
 
     let flags = EsbuildFlagsBuilder::default()
         .bundle(true)

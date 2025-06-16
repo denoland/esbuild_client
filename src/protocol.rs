@@ -270,7 +270,9 @@ pub struct ServeOnRequestArgs {
 
 impl_encode_struct!(for ServeOnRequestArgs { remote_address, method, path, status, time_in_ms });
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
 pub enum ImportKind {
     EntryPoint,
     ImportStatement,

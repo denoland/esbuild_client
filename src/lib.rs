@@ -212,14 +212,24 @@ impl MakePluginHandler for Option<()> {
     }
 }
 
+#[derive(Default)]
+pub struct EsbuildServiceOptions<'a> {
+    pub cwd: Option<&'a Path>,
+}
+
 impl EsbuildService {
     pub async fn new(
         path: impl AsRef<Path>,
         version: &str,
         plugin_handler: impl MakePluginHandler,
+        options: EsbuildServiceOptions<'_>,
     ) -> Result<Self, AnyError> {
         let path = path.as_ref();
-        let mut esbuild = tokio::process::Command::new(path)
+        let mut cmd = tokio::process::Command::new(path);
+        if let Some(cwd) = options.cwd {
+            cmd.current_dir(cwd);
+        }
+        let mut esbuild = cmd
             .arg(format!("--service={}", version))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1075,4 +1085,61 @@ impl EsbuildFlags {
         }
         flags
     }
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[derive(Clone, Debug)]
+pub struct Metafile {
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub inputs: HashMap<String, MetafileInput>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub outputs: HashMap<String, MetafileOutput>,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[derive(Clone, Debug)]
+pub struct MetafileInput {
+    pub bytes: u64,
+    pub imports: Vec<MetafileInputImport>,
+    pub format: Option<String>,
+    pub with: Option<HashMap<String, String>>,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[derive(Clone, Debug)]
+pub struct MetafileInputImport {
+    pub path: String,
+    pub kind: ImportKind,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub external: bool,
+    pub original: Option<String>,
+    pub with: Option<HashMap<String, String>>,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug)]
+pub struct MetafileOutput {
+    pub bytes: u64,
+    pub inputs: HashMap<String, MetafileOutputInput>,
+    pub imports: Vec<MetafileOutputImport>,
+    pub exports: Vec<String>,
+    pub entry_point: Option<String>,
+    pub css_bundle: Option<String>,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[derive(Clone, Debug)]
+pub struct MetafileOutputInput {
+    pub bytes_in_output: u64,
+}
+
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+#[derive(Clone, Debug)]
+pub struct MetafileOutputImport {
+    pub path: String,
+    pub kind: ImportKind,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub external: Option<bool>,
 }
