@@ -569,6 +569,19 @@ pub struct OnEndArgs {
     pub write_to_stdout: Option<Vec<u8>>,
 }
 
+impl From<OnEndArgs> for protocol::BuildResponse {
+    fn from(end: OnEndArgs) -> Self {
+        Self {
+            errors: end.errors,
+            warnings: end.warnings,
+            output_files: end.output_files,
+            metafile: end.metafile,
+            mangle_cache: end.mangle_cache,
+            write_to_stdout: end.write_to_stdout,
+        }
+    }
+}
+
 struct OnEndHook;
 impl PluginHook for OnEndHook {
     type Request = protocol::OnEndRequest;
@@ -730,6 +743,9 @@ async fn handle_packet(
                             protocol::RebuildResponse::from_any_value(packet.value.clone())?;
                         let _ = tx.send(rebuild_response);
                     }
+                    protocol::RequestKind::Cancel(tx) => {
+                        let _ = tx.send(());
+                    }
                 }
 
                 Ok(())
@@ -830,6 +846,24 @@ impl ProtocolClientInner {
         self.response_tx.send(packet).await?;
         let response = rx.await?;
         Ok(response)
+    }
+
+    pub async fn send_cancel_request(&self, key: u32) -> Result<(), AnyError> {
+        let id = self.id.fetch_add(1, Ordering::Relaxed);
+        let packet = protocol::ProtocolPacket {
+            id,
+            is_request: true,
+            value: protocol::ProtocolMessage::Request(protocol::AnyRequest::Cancel(
+                protocol::CancelRequest { key },
+            )),
+        };
+        let (tx, rx) = oneshot::channel();
+        self.pending
+            .lock()
+            .insert(id, protocol::RequestKind::Cancel(tx));
+        self.response_tx.send(packet).await?;
+        rx.await?;
+        Ok(())
     }
 }
 
@@ -1130,6 +1164,7 @@ pub struct MetafileOutput {
     pub bytes: u64,
     pub inputs: HashMap<String, MetafileOutputInput>,
     pub imports: Vec<MetafileOutputImport>,
+    #[cfg_attr(feature = "serde", serde(default))]
     pub exports: Vec<String>,
     pub entry_point: Option<String>,
     pub css_bundle: Option<String>,
