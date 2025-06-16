@@ -42,10 +42,12 @@ async fn context_simple() -> Result<(), Box<dyn std::error::Error>> {
 
     let result = Arc::new(Mutex::new(None));
 
-    let esbuild = create_esbuild_service_with_plugin(Arc::new(ContextPluginHandler {
-        // context: "test".to_string(),
-        result: result.clone(),
-    }))
+    let esbuild = create_esbuild_service_with_plugin(
+        &test_dir,
+        Arc::new(ContextPluginHandler {
+            result: result.clone(),
+        }),
+    )
     .await?;
 
     let flags = EsbuildFlagsBuilder::default()

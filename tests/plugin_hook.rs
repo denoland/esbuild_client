@@ -125,12 +125,7 @@ console.log('PI =', PI);
 
     let plugin_handler = Arc::new(CountingPluginHandler::new());
 
-    let esbuild = esbuild_client::EsbuildService::new(
-        common::fetch_esbuild(),
-        common::ESBUILD_VERSION,
-        plugin_handler.clone(),
-    )
-    .await?;
+    let esbuild = create_esbuild_service_with_plugin(&test_dir, plugin_handler.clone()).await?;
 
     let mut flags = EsbuildFlagsBuilder::default()
         .bundle(true)

@@ -8,7 +8,7 @@ async fn test_build_with_errors() -> Result<(), Box<dyn std::error::Error>> {
     let input_file = test_dir.create_file("input.js", "console.log('unclosed string")?;
     let output_file = test_dir.path.join("output.js");
 
-    let esbuild = create_esbuild_service().await?;
+    let esbuild = create_esbuild_service(&test_dir).await?;
 
     let flags = EsbuildFlagsBuilder::default()
         .bundle(true)
