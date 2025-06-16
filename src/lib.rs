@@ -1109,7 +1109,7 @@ pub struct MetafileInput {
 #[derive(Clone, Debug)]
 pub struct MetafileInputImport {
     pub path: String,
-    pub kind: String,
+    pub kind: ImportKind,
     #[cfg_attr(feature = "serde", serde(default))]
     pub external: bool,
     pub original: Option<String>,
@@ -1139,7 +1139,7 @@ pub struct MetafileOutputInput {
 #[derive(Clone, Debug)]
 pub struct MetafileOutputImport {
     pub path: String,
-    pub kind: String,
+    pub kind: ImportKind,
     #[cfg_attr(feature = "serde", serde(default))]
     pub external: Option<bool>,
 }
