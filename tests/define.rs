@@ -10,7 +10,7 @@ async fn test_basic_build() -> Result<(), Box<dyn std::error::Error>> {
     let test_dir = TestDir::new("esbuild_test")?;
     let input_file = test_dir.create_file("input.js", "console.log(process.env.NODE_ENV);")?;
 
-    let esbuild = create_esbuild_service().await?;
+    let esbuild = create_esbuild_service(&test_dir).await?;
 
     let flags = EsbuildFlagsBuilder::default()
         .bundle(true)
