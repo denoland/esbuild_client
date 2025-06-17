@@ -754,7 +754,7 @@ pub enum AnyRequest {
     // Ping(PingRequest),
     Rebuild(RebuildRequest),
     Dispose(DisposeRequest),
-    // Cancel(CancelRequest),
+    Cancel(CancelRequest),
     // Watch(WatchRequest),
     // OnServe(OnServeRequest),
     // Transform(TransformRequest),
@@ -771,6 +771,7 @@ pub enum RequestKind {
     Build(oneshot::Sender<BuildResponse>),
     Dispose(oneshot::Sender<()>),
     Rebuild(oneshot::Sender<RebuildResponse>),
+    Cancel(oneshot::Sender<()>),
 }
 
 #[derive(Debug, Clone)]

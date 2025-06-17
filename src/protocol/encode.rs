@@ -233,6 +233,7 @@ impl Encode for AnyRequest {
             AnyRequest::Dispose(dispose) => dispose.encode_into(buf),
             AnyRequest::Rebuild(rebuild) => rebuild.encode_into(buf),
             // AnyRequest::Import(import) => import.encode_into(buf),
+            AnyRequest::Cancel(cancel) => cancel.encode_into(buf),
         }
     }
 }
