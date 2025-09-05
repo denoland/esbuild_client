@@ -14,8 +14,7 @@ async fn test_basic_build() -> Result<(), Box<dyn std::error::Error>> {
     let flags = EsbuildFlagsBuilder::default()
         .bundle(true)
         .minify(false)
-        .build()?
-        .to_flags();
+        .build();
 
     let response = esbuild
         .client()

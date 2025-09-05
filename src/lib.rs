@@ -22,7 +22,10 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout},
     sync::{mpsc, oneshot, watch},
 };
+mod flags;
 pub mod protocol;
+
+pub use flags::EsbuildFlagsBuilder;
 
 pub struct EsbuildService {
     exited: watch::Receiver<Option<ExitStatus>>,
@@ -971,59 +974,6 @@ pub enum Loader {
     Map(IndexMap<String, BuiltinLoader>),
 }
 
-#[derive(derive_builder::Builder)]
-#[builder(setter(strip_option), default)]
-pub struct EsbuildFlags {
-    color: Option<bool>,
-    log_level: Option<LogLevel>,
-    log_limit: Option<u32>,
-    format: Option<Format>,
-    platform: Option<Platform>,
-    tree_shaking: Option<bool>,
-    bundle: Option<bool>,
-    outfile: Option<String>,
-    outdir: Option<String>,
-    packages: Option<PackagesHandling>,
-    tsconfig: Option<String>,
-    tsconfig_raw: Option<String>,
-    loader: Option<IndexMap<String, BuiltinLoader>>,
-    external: Option<Vec<String>>,
-    minify: Option<bool>,
-    splitting: Option<bool>,
-    metafile: Option<bool>,
-    sourcemap: Option<Sourcemap>,
-    defines: Option<IndexMap<String, String>>,
-}
-fn default<T: Default>() -> T {
-    T::default()
-}
-
-impl Default for EsbuildFlags {
-    fn default() -> Self {
-        Self {
-            color: default(),
-            log_level: default(),
-            log_limit: default(),
-            format: Some(Format::Esm),
-            platform: Some(Platform::Node),
-            tree_shaking: Some(true),
-            bundle: Some(true),
-            outfile: default(),
-            outdir: default(),
-            packages: Some(PackagesHandling::Bundle),
-            tsconfig: default(),
-            tsconfig_raw: default(),
-            loader: default(),
-            external: default(),
-            minify: default(),
-            splitting: default(),
-            metafile: default(),
-            sourcemap: default(),
-            defines: default(),
-        }
-    }
-}
-
 impl Display for LogLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1101,82 +1051,6 @@ impl Display for Sourcemap {
             Sourcemap::Inline => write!(f, "inline"),
             Sourcemap::Both => write!(f, "both"),
         }
-    }
-}
-
-impl EsbuildFlags {
-    pub fn to_flags(&self) -> Vec<String> {
-        let mut flags = Vec::new();
-        if let Some(color) = self.color {
-            flags.push(format!("--color={}", color));
-        }
-        if let Some(log_level) = self.log_level {
-            flags.push(format!("--log-level={}", log_level));
-        }
-        if let Some(log_limit) = self.log_limit {
-            flags.push(format!("--log-limit={}", log_limit));
-        }
-        if let Some(format) = self.format {
-            flags.push(format!("--format={}", format));
-        }
-        if let Some(platform) = self.platform {
-            flags.push(format!("--platform={}", platform));
-        }
-        if let Some(tree_shaking) = self.tree_shaking {
-            flags.push(format!("--tree-shaking={}", tree_shaking));
-        }
-        if let Some(bundle) = self.bundle {
-            flags.push(format!("--bundle={}", bundle));
-        }
-        if let Some(outfile) = &self.outfile {
-            flags.push(format!("--outfile={}", outfile));
-        }
-        if let Some(outdir) = &self.outdir {
-            flags.push(format!("--outdir={}", outdir));
-        }
-        if let Some(packages) = self.packages {
-            flags.push(format!("--packages={}", packages));
-        }
-        if let Some(tsconfig) = &self.tsconfig {
-            flags.push(format!("--tsconfig={}", tsconfig));
-        }
-        if let Some(tsconfig_raw) = &self.tsconfig_raw {
-            flags.push(format!("--tsconfig-raw={}", tsconfig_raw));
-        }
-        if let Some(loader) = &self.loader {
-            for (key, value) in loader {
-                flags.push(format!("--loader:{}={}", key, value));
-            }
-        }
-        if let Some(external) = &self.external {
-            for external in external {
-                flags.push(format!("--external:{}", external));
-            }
-        }
-        if let Some(minify) = self.minify
-            && minify
-        {
-            flags.push("--minify".to_string());
-        }
-        if let Some(splitting) = self.splitting
-            && splitting
-        {
-            flags.push("--splitting".to_string());
-        }
-        if let Some(defines) = &self.defines {
-            for (key, value) in defines {
-                flags.push(format!("--define:{}={}", key, value));
-            }
-        }
-        if let Some(metafile) = self.metafile
-            && metafile
-        {
-            flags.push("--metafile".to_string());
-        }
-        if let Some(sourcemap) = self.sourcemap {
-            flags.push(format!("--sourcemap={}", sourcemap));
-        }
-        flags
     }
 }
 

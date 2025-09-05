@@ -53,9 +53,7 @@ async fn context_simple() -> Result<(), Box<dyn std::error::Error>> {
     let flags = EsbuildFlagsBuilder::default()
         .bundle(true)
         .metafile(true)
-        .build()
-        .unwrap()
-        .to_flags();
+        .build_with_defaults();
 
     let response = esbuild
         .client()

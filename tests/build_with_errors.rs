@@ -12,8 +12,7 @@ async fn test_build_with_errors() -> Result<(), Box<dyn std::error::Error>> {
 
     let flags = EsbuildFlagsBuilder::default()
         .bundle(true)
-        .build()?
-        .to_flags();
+        .build_with_defaults();
 
     let response = esbuild
         .client()
