@@ -10,7 +10,6 @@ repository = "https://github.com/denoland/esbuild_client"
 anyhow = "1.0.98"
 async-trait = "0.1.88"
 deno_unsync = "0.4.2"
-derive_builder = "0.20.2"
 indexmap = { version = "2.9.0" }
 log = "0.4.27"
 parking_lot = "0.12.3"
