@@ -25,7 +25,8 @@ async fn test_build_with_errors() -> Result<(), Box<dyn std::error::Error>> {
             flags,
             ..Default::default()
         })
-        .await?;
+        .await?
+        .unwrap();
 
     // Check that build failed with errors
     assert!(

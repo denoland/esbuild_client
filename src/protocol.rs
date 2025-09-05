@@ -226,6 +226,27 @@ pub struct Message {
 
 protocol_impls!(for Message { id, plugin_name, text, #[optional] location, notes, #[optional] detail });
 
+struct MessageFromAnyValue(Message);
+impl FromAnyValue for MessageFromAnyValue {
+    fn from_any_value(value: AnyValue) -> Result<Self, anyhow::Error> {
+        if let AnyValue::Map(map) = value {
+            let message = Message::from_map(&map)?;
+            return Ok(MessageFromAnyValue(message));
+        } else if let AnyValue::String(s) = value {
+            let message = Message {
+                text: s,
+                detail: None,
+                id: "".to_string(),
+                plugin_name: "".to_string(),
+                notes: vec![],
+                location: None,
+            };
+            return Ok(MessageFromAnyValue(message));
+        }
+        Ok(MessageFromAnyValue(Message::from_any_value(value)?))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Note {
     pub text: String,
@@ -422,6 +443,10 @@ protocol_impls!(for BuildOutputFile { path, contents, hash });
 pub struct PingRequest {
     // command: "ping";
 }
+
+impl_encode_command!(for PingRequest {
+  const Command = "ping";
+});
 
 #[derive(Debug, Clone)]
 pub struct RebuildRequest {
@@ -768,11 +793,18 @@ pub enum AnyRequest {
 
 #[derive(Debug)]
 pub enum RequestKind {
-    Build(oneshot::Sender<BuildResponse>),
+    Build(oneshot::Sender<Result<BuildResponse, Message>>),
     Dispose(oneshot::Sender<()>),
-    Rebuild(oneshot::Sender<RebuildResponse>),
+    Rebuild(oneshot::Sender<Result<RebuildResponse, Message>>),
     Cancel(oneshot::Sender<()>),
 }
+
+#[derive(Debug, Clone, Default)]
+pub struct PingResponse {
+    // command: "ping";
+}
+
+impl_encode_struct!(for PingResponse {});
 
 #[derive(Debug, Clone)]
 pub enum AnyResponse {
@@ -787,6 +819,7 @@ pub enum AnyResponse {
     Resolve(ResolveResponse),
     OnResolve(OnResolveResponse),
     OnLoad(OnLoadResponse),
+    Ping(PingResponse),
 }
 
 enum_impl_from!(for AnyResponse {
@@ -801,6 +834,7 @@ enum_impl_from!(for AnyResponse {
     Resolve(ResolveResponse),
     OnResolve(OnResolveResponse),
     OnLoad(OnLoadResponse),
+    Ping(PingResponse),
 });
 
 #[derive(Debug, Clone)]
@@ -957,5 +991,15 @@ impl FromMap for OnStartRequest {
     fn from_map(map: &IndexMap<String, AnyValue>) -> Result<Self, anyhow::Error> {
         let key = get!(map, "key")?;
         Ok(OnStartRequest { key })
+    }
+}
+
+impl<T: FromMap> FromMap for Result<T, Message> {
+    fn from_map(map: &IndexMap<String, AnyValue>) -> Result<Self, anyhow::Error> {
+        if let Some(value) = map.get("error") {
+            let error = MessageFromAnyValue::from_any_value(value.clone())?;
+            return Ok(Err(error.0));
+        }
+        Ok(Ok(T::from_map(map)?))
     }
 }

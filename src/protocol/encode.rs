@@ -253,6 +253,7 @@ impl Encode for AnyResponse {
             AnyResponse::Resolve(resolve_response) => todo!(),
             AnyResponse::OnResolve(on_resolve_response) => on_resolve_response.encode_into(buf),
             AnyResponse::OnLoad(on_load_response) => on_load_response.encode_into(buf),
+            AnyResponse::Ping(ping_response) => ping_response.encode_into(buf),
         }
     }
 }

@@ -19,7 +19,7 @@ use protocol::{
 };
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    process::{ChildStdin, ChildStdout},
+    process::{Child, ChildStdin, ChildStdout},
     sync::{mpsc, oneshot, watch},
 };
 pub mod protocol;
@@ -122,11 +122,14 @@ async fn handle_read(amount: usize, state: &mut ProtocolState) {
 }
 
 async fn protocol_task(
+    mut child: Child,
     stdout: ChildStdout,
     stdin: ChildStdin,
     ready_tx: oneshot::Sender<()>,
     mut response_rx: mpsc::Receiver<ProtocolPacket>,
     packet_tx: mpsc::Sender<AnyPacket>,
+    mut stop_rx: mpsc::Receiver<()>,
+    exited_tx: watch::Sender<Option<ExitStatus>>,
 ) -> Result<(), AnyError> {
     let mut stdout = stdout;
 
@@ -135,6 +138,21 @@ async fn protocol_task(
 
     loop {
         tokio::select! {
+            status = child.wait() => {
+                let status = status.unwrap();
+                log::debug!("esbuild exited with status: {status}");
+                let _ = exited_tx.send(Some(status));
+                return Ok(());
+            }
+
+            _ = stop_rx.recv() => {
+                stdin.shutdown().await?;
+                drop(stdout);
+                let _ = exited_tx.send(None);
+                child.kill().await?;
+
+                return Ok(());
+            }
             res = response_rx.recv() => {
                 let packet: protocol::ProtocolPacket = res.unwrap();
                 log::trace!("got send packet from receiver: {packet:?}");
@@ -231,9 +249,11 @@ impl EsbuildService {
         }
         let mut esbuild = cmd
             .arg(format!("--service={}", version))
+            .arg("--ping")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
+            .kill_on_drop(true)
             .spawn()?;
 
         let stdin = esbuild.stdin.take().unwrap();
@@ -243,20 +263,21 @@ impl EsbuildService {
         let (packet_tx, mut packet_rx) = mpsc::channel(100);
         let (response_tx, response_rx) = mpsc::channel(100);
         let (exited_tx, exited_rx) = watch::channel(None);
+        let (stop_tx, stop_rx) = mpsc::channel(1);
         deno_unsync::spawn(protocol_task(
+            esbuild,
             stdout,
             stdin,
             ready_tx,
             response_rx,
             packet_tx,
+            stop_rx,
+            exited_tx,
         ));
 
-        deno_unsync::spawn(async move {
-            let status = esbuild.wait().await.unwrap();
-            let _ = exited_tx.send(Some(status));
-        });
+        deno_unsync::spawn(async move {});
 
-        let client = ProtocolClient::new(response_tx.clone());
+        let client = ProtocolClient::new(response_tx.clone(), stop_tx);
         let plugin_handler = plugin_handler.make_plugin_handler(client.clone());
         let pending = client.0.pending.clone();
 
@@ -718,6 +739,18 @@ async fn handle_packet(
                             )?;
                             Ok(())
                         }
+                        "ping" => {
+                            response_tx
+                                .send(protocol::ProtocolPacket {
+                                    id: packet.id,
+                                    is_request: false,
+                                    value: protocol::ProtocolMessage::Response(
+                                        protocol::PingResponse::default().into(),
+                                    ),
+                                })
+                                .await?;
+                            Ok(())
+                        }
                         _ => {
                             todo!("handle: {:?}", packet.value)
                         }
@@ -732,7 +765,9 @@ async fn handle_packet(
                 match kind {
                     protocol::RequestKind::Build(tx) => {
                         let build_response =
-                            protocol::BuildResponse::from_any_value(packet.value.clone())?;
+                            Result::<protocol::BuildResponse, protocol::Message>::from_any_value(
+                                packet.value.clone(),
+                            )?;
                         let _ = tx.send(build_response);
                     }
                     protocol::RequestKind::Dispose(tx) => {
@@ -740,7 +775,9 @@ async fn handle_packet(
                     }
                     protocol::RequestKind::Rebuild(tx) => {
                         let rebuild_response =
-                            protocol::RebuildResponse::from_any_value(packet.value.clone())?;
+                            Result::<protocol::RebuildResponse, protocol::Message>::from_any_value(
+                                packet.value.clone(),
+                            )?;
                         let _ = tx.send(rebuild_response);
                     }
                     protocol::RequestKind::Cancel(tx) => {
@@ -763,14 +800,18 @@ pub struct ProtocolClientInner {
     response_tx: mpsc::Sender<protocol::ProtocolPacket>,
     id: AtomicU32,
     pending: Arc<Mutex<PendingResponseMap>>,
+    stop_tx: mpsc::Sender<()>,
 }
 
 #[derive(Clone)]
 pub struct ProtocolClient(Arc<ProtocolClientInner>);
 
 impl ProtocolClient {
-    pub fn new(response_tx: mpsc::Sender<protocol::ProtocolPacket>) -> Self {
-        Self(Arc::new(ProtocolClientInner::new(response_tx)))
+    pub fn new(
+        response_tx: mpsc::Sender<protocol::ProtocolPacket>,
+        stop_tx: mpsc::Sender<()>,
+    ) -> Self {
+        Self(Arc::new(ProtocolClientInner::new(response_tx, stop_tx)))
     }
 }
 
@@ -782,18 +823,24 @@ impl Deref for ProtocolClient {
 }
 
 impl ProtocolClientInner {
-    fn new(response_tx: mpsc::Sender<protocol::ProtocolPacket>) -> Self {
+    fn new(response_tx: mpsc::Sender<protocol::ProtocolPacket>, stop_tx: mpsc::Sender<()>) -> Self {
         Self {
             response_tx,
             id: AtomicU32::new(0),
             pending: Default::default(),
+            stop_tx,
         }
+    }
+
+    pub async fn stop(&self) -> Result<(), AnyError> {
+        self.stop_tx.send(()).await?;
+        Ok(())
     }
 
     pub async fn send_build_request(
         &self,
         req: protocol::BuildRequest,
-    ) -> Result<protocol::BuildResponse, AnyError> {
+    ) -> Result<Result<protocol::BuildResponse, protocol::Message>, AnyError> {
         let id = self.id.fetch_add(1, Ordering::Relaxed);
         let packet = protocol::ProtocolPacket {
             id,
@@ -830,7 +877,7 @@ impl ProtocolClientInner {
     pub async fn send_rebuild_request(
         &self,
         key: u32,
-    ) -> Result<protocol::RebuildResponse, AnyError> {
+    ) -> Result<Result<protocol::RebuildResponse, protocol::Message>, AnyError> {
         let id = self.id.fetch_add(1, Ordering::Relaxed);
         let packet = protocol::ProtocolPacket {
             id,

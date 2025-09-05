@@ -30,7 +30,8 @@ async fn test_basic_build() -> Result<(), Box<dyn std::error::Error>> {
             flags,
             ..Default::default()
         })
-        .await?;
+        .await?
+        .unwrap();
 
     // Check that build succeeded
     assert!(
