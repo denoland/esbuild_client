@@ -19,10 +19,9 @@ async fn test_basic_build() -> Result<(), Box<dyn std::error::Error>> {
 
     let flags = EsbuildFlagsBuilder::default()
         .metafile(true)
-        .outfile("output.js".into())
+        .outfile("output.js")
         .bundle(true)
-        .build()?
-        .to_flags();
+        .build_with_defaults();
 
     let response = esbuild
         .client()

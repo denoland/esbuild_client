@@ -1,5 +1,4 @@
 use esbuild_client::{EsbuildFlagsBuilder, protocol::BuildRequest};
-use indexmap::IndexMap;
 use pretty_assertions::assert_eq;
 mod common;
 
@@ -15,12 +14,11 @@ async fn test_basic_build() -> Result<(), Box<dyn std::error::Error>> {
     let flags = EsbuildFlagsBuilder::default()
         .bundle(true)
         .minify(false)
-        .defines(IndexMap::from_iter([(
+        .defines([(
             "process.env.NODE_ENV".to_string(),
             "\"production\"".to_string(),
-        )]))
-        .build()?
-        .to_flags();
+        )])
+        .build_with_defaults();
 
     let response = esbuild
         .client()

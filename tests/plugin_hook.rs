@@ -130,8 +130,7 @@ console.log('PI =', PI);
     let mut flags = EsbuildFlagsBuilder::default()
         .bundle(true)
         .minify(false)
-        .build()?
-        .to_flags();
+        .build();
 
     // Set up plugin configuration
     let plugin = esbuild_client::protocol::BuildPlugin {

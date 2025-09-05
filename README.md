@@ -19,8 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .bundle(true)
         .minify(true)
         .format(esbuild::Format::Esm)
-        .build()?
-        .to_flags();
+        .build_with_defaults();
 
     let response = esbuild
         .client()
@@ -69,8 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .bundle(true)
         .minify(true)
         .format(esbuild::Format::Esm)
-        .build()?
-        .to_flags();
+        .build_with_defaults();
 
     let response = esbuild
         .client()
