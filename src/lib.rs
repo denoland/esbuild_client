@@ -34,6 +34,10 @@ impl EsbuildService {
         &self.client
     }
 
+    pub async fn stop(self) -> Result<(), AnyError> {
+        self.client.send_stop().await
+    }
+
     pub async fn wait_for_exit(&self) -> Result<ExitStatus, AnyError> {
         if self.exited.borrow().is_some() {
             return Ok(self.exited.borrow().unwrap());
@@ -832,7 +836,7 @@ impl ProtocolClientInner {
         }
     }
 
-    pub async fn stop(&self) -> Result<(), AnyError> {
+    async fn send_stop(&self) -> Result<(), AnyError> {
         self.stop_tx.send(()).await?;
         Ok(())
     }
