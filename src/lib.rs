@@ -125,6 +125,7 @@ async fn handle_read(amount: usize, state: &mut ProtocolState) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn protocol_task(
     mut child: Child,
     stdout: ChildStdout,
@@ -1152,25 +1153,25 @@ impl EsbuildFlags {
                 flags.push(format!("--external:{}", external));
             }
         }
-        if let Some(minify) = self.minify {
-            if minify {
-                flags.push("--minify".to_string());
-            }
+        if let Some(minify) = self.minify
+            && minify
+        {
+            flags.push("--minify".to_string());
         }
-        if let Some(splitting) = self.splitting {
-            if splitting {
-                flags.push("--splitting".to_string());
-            }
+        if let Some(splitting) = self.splitting
+            && splitting
+        {
+            flags.push("--splitting".to_string());
         }
         if let Some(defines) = &self.defines {
             for (key, value) in defines {
                 flags.push(format!("--define:{}={}", key, value));
             }
         }
-        if let Some(metafile) = self.metafile {
-            if metafile {
-                flags.push("--metafile".to_string());
-            }
+        if let Some(metafile) = self.metafile
+            && metafile
+        {
+            flags.push("--metafile".to_string());
         }
         if let Some(sourcemap) = self.sourcemap {
             flags.push(format!("--sourcemap={}", sourcemap));
