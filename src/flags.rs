@@ -28,7 +28,7 @@ impl EsbuildFlagsBuilder {
         Self::default()
     }
 
-    pub fn with_defaults(mut self) -> Self {
+    pub fn with_defaults(&mut self) -> &mut Self {
         if !self.is_set(Self::S_FORMAT) {
             self.flags.push(format!("--format={}", Format::Esm));
         }
@@ -55,61 +55,62 @@ impl EsbuildFlagsBuilder {
         self
     }
 
-    pub fn finish(self) -> Vec<String> {
-        self.flags
+    pub fn finish(&mut self) -> Vec<String> {
+        self.set = 0;
+        std::mem::take(&mut self.flags)
     }
 
-    pub fn build(self) -> Vec<String> {
+    pub fn build(&mut self) -> Vec<String> {
         self.finish()
     }
 
-    pub fn finish_with_defaults(self) -> Vec<String> {
+    pub fn finish_with_defaults(&mut self) -> Vec<String> {
         self.with_defaults().finish()
     }
 
-    pub fn build_with_defaults(self) -> Vec<String> {
+    pub fn build_with_defaults(&mut self) -> Vec<String> {
         self.with_defaults().build()
     }
 
-    pub fn raw_flag(mut self, flag: impl Into<String>) -> Self {
+    pub fn raw_flag(&mut self, flag: impl Into<String>) -> &mut Self {
         self.flags.push(flag.into());
         self
     }
 
-    pub fn color(mut self, value: bool) -> Self {
+    pub fn color(&mut self, value: bool) -> &mut Self {
         self.flags.push(format!("--color={}", value));
         self
     }
 
-    pub fn log_level(mut self, level: LogLevel) -> Self {
+    pub fn log_level(&mut self, level: LogLevel) -> &mut Self {
         self.flags.push(format!("--log-level={}", level));
         self
     }
 
-    pub fn log_limit(mut self, limit: u32) -> Self {
+    pub fn log_limit(&mut self, limit: u32) -> &mut Self {
         self.flags.push(format!("--log-limit={}", limit));
         self
     }
 
-    pub fn format(mut self, format: Format) -> Self {
+    pub fn format(&mut self, format: Format) -> &mut Self {
         self.flags.push(format!("--format={}", format));
         self.mark(Self::S_FORMAT);
         self
     }
 
-    pub fn platform(mut self, platform: Platform) -> Self {
+    pub fn platform(&mut self, platform: Platform) -> &mut Self {
         self.flags.push(format!("--platform={}", platform));
         self.mark(Self::S_PLATFORM);
         self
     }
 
-    pub fn tree_shaking(mut self, value: bool) -> Self {
+    pub fn tree_shaking(&mut self, value: bool) -> &mut Self {
         self.flags.push(format!("--tree-shaking={}", value));
         self.mark(Self::S_TREE_SHAKING);
         self
     }
 
-    pub fn bundle(mut self, value: bool) -> Self {
+    pub fn bundle(&mut self, value: bool) -> &mut Self {
         self.flags.push(format!("--bundle={}", value));
         if value {
             self.mark(Self::S_BUNDLE_TRUE);
@@ -119,41 +120,41 @@ impl EsbuildFlagsBuilder {
         self
     }
 
-    pub fn outfile(mut self, o: impl Into<String>) -> Self {
+    pub fn outfile(&mut self, o: impl Into<String>) -> &mut Self {
         let o = o.into();
         self.flags.push(format!("--outfile={}", o));
         self
     }
 
-    pub fn outdir(mut self, o: impl Into<String>) -> Self {
+    pub fn outdir(&mut self, o: impl Into<String>) -> &mut Self {
         let o = o.into();
         self.flags.push(format!("--outdir={}", o));
         self
     }
 
-    pub fn packages(mut self, handling: PackagesHandling) -> Self {
+    pub fn packages(&mut self, handling: PackagesHandling) -> &mut Self {
         self.flags.push(format!("--packages={}", handling));
         self.mark(Self::S_PACKAGES);
         self
     }
 
-    pub fn tsconfig(mut self, path: impl Into<String>) -> Self {
+    pub fn tsconfig(&mut self, path: impl Into<String>) -> &mut Self {
         self.flags.push(format!("--tsconfig={}", path.into()));
         self
     }
 
-    pub fn tsconfig_raw(mut self, json: impl Into<String>) -> Self {
+    pub fn tsconfig_raw(&mut self, json: impl Into<String>) -> &mut Self {
         self.flags.push(format!("--tsconfig-raw={}", json.into()));
         self
     }
 
-    pub fn loader(mut self, ext: impl Into<String>, loader: BuiltinLoader) -> Self {
+    pub fn loader(&mut self, ext: impl Into<String>, loader: BuiltinLoader) -> &mut Self {
         self.flags
             .push(format!("--loader:{}={}", ext.into(), loader));
         self
     }
 
-    pub fn loaders<I, K>(mut self, entries: I) -> Self
+    pub fn loaders<I, K>(&mut self, entries: I) -> &mut Self
     where
         I: IntoIterator<Item = (K, BuiltinLoader)>,
         K: Into<String>,
@@ -164,12 +165,12 @@ impl EsbuildFlagsBuilder {
         self
     }
 
-    pub fn external(mut self, spec: impl Into<String>) -> Self {
+    pub fn external(&mut self, spec: impl Into<String>) -> &mut Self {
         self.flags.push(format!("--external:{}", spec.into()));
         self
     }
 
-    pub fn externals<I, S>(mut self, specs: I) -> Self
+    pub fn externals<I, S>(&mut self, specs: I) -> &mut Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -180,7 +181,7 @@ impl EsbuildFlagsBuilder {
         self
     }
 
-    pub fn minify(mut self, value: bool) -> Self {
+    pub fn minify(&mut self, value: bool) -> &mut Self {
         if value {
             self.flags.push("--minify".to_string());
         } else {
@@ -189,7 +190,7 @@ impl EsbuildFlagsBuilder {
         self
     }
 
-    pub fn splitting(mut self, value: bool) -> Self {
+    pub fn splitting(&mut self, value: bool) -> &mut Self {
         if value {
             self.flags.push("--splitting".to_string());
         } else {
@@ -198,13 +199,13 @@ impl EsbuildFlagsBuilder {
         self
     }
 
-    pub fn define(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn define(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
         self.flags
             .push(format!("--define:{}={}", key.into(), value.into()));
         self
     }
 
-    pub fn defines<I, K, V>(mut self, entries: I) -> Self
+    pub fn defines<I, K, V>(&mut self, entries: I) -> &mut Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: Into<String>,
@@ -217,7 +218,7 @@ impl EsbuildFlagsBuilder {
         self
     }
 
-    pub fn metafile(mut self, value: bool) -> Self {
+    pub fn metafile(&mut self, value: bool) -> &mut Self {
         if value {
             self.flags.push("--metafile".to_string());
         } else {
@@ -226,38 +227,38 @@ impl EsbuildFlagsBuilder {
         self
     }
 
-    pub fn sourcemap(mut self, kind: Sourcemap) -> Self {
+    pub fn sourcemap(&mut self, kind: Sourcemap) -> &mut Self {
         self.flags.push(format!("--sourcemap={}", kind));
         self
     }
 
-    pub fn entry_names(mut self, pattern: impl Into<String>) -> Self {
+    pub fn entry_names(&mut self, pattern: impl Into<String>) -> &mut Self {
         self.flags.push(format!("--entry-names={}", pattern.into()));
         self
     }
 
-    pub fn chunk_names(mut self, pattern: impl Into<String>) -> Self {
+    pub fn chunk_names(&mut self, pattern: impl Into<String>) -> &mut Self {
         self.flags.push(format!("--chunk-names={}", pattern.into()));
         self
     }
 
-    pub fn asset_names(mut self, pattern: impl Into<String>) -> Self {
+    pub fn asset_names(&mut self, pattern: impl Into<String>) -> &mut Self {
         self.flags.push(format!("--asset-names={}", pattern.into()));
         self
     }
 
-    pub fn outbase(mut self, base: impl Into<String>) -> Self {
+    pub fn outbase(&mut self, base: impl Into<String>) -> &mut Self {
         self.flags.push(format!("--outbase={}", base.into()));
         self
     }
 
-    pub fn out_extension(mut self, ext: impl Into<String>, to: impl Into<String>) -> Self {
+    pub fn out_extension(&mut self, ext: impl Into<String>, to: impl Into<String>) -> &mut Self {
         self.flags
             .push(format!("--out-extension:{}={}", ext.into(), to.into()));
         self
     }
 
-    pub fn out_extensions<I, K, V>(mut self, entries: I) -> Self
+    pub fn out_extensions<I, K, V>(&mut self, entries: I) -> &mut Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: Into<String>,
@@ -270,17 +271,17 @@ impl EsbuildFlagsBuilder {
         self
     }
 
-    pub fn public_path(mut self, path: impl Into<String>) -> Self {
+    pub fn public_path(&mut self, path: impl Into<String>) -> &mut Self {
         self.flags.push(format!("--public-path={}", path.into()));
         self
     }
 
-    pub fn condition(mut self, cond: impl Into<String>) -> Self {
+    pub fn condition(&mut self, cond: impl Into<String>) -> &mut Self {
         self.flags.push(format!("--conditions={}", cond.into()));
         self
     }
 
-    pub fn conditions<I, S>(mut self, conds: I) -> Self
+    pub fn conditions<I, S>(&mut self, conds: I) -> &mut Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
