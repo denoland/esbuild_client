@@ -76,11 +76,12 @@ async fn context_simple() -> Result<(), Box<dyn std::error::Error>> {
             }]),
             ..Default::default()
         })
-        .await?;
+        .await?
+        .unwrap();
 
     assert!(response.errors.is_empty());
 
-    let response = esbuild.client().send_rebuild_request(1).await?;
+    let response = esbuild.client().send_rebuild_request(1).await?.unwrap();
     assert!(response.errors.is_empty());
     assert!(response.warnings.is_empty());
 

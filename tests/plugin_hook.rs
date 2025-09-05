@@ -163,7 +163,8 @@ console.log('PI =', PI);
             plugins: Some(vec![plugin]),
             ..Default::default()
         })
-        .await?;
+        .await?
+        .unwrap();
 
     // Check that build succeeded
     assert!(
