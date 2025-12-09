@@ -26,6 +26,8 @@ fn npm_package_name() -> String {
         ("aarch64", "macos" | "apple") => "darwin-arm64".to_string(),
         ("x86_64", "windows") => "win32-x64".to_string(),
         ("aarch64", "windows") => "win32-arm64".to_string(),
+        ("x86_64", "android") => "android-x64".to_string(),
+        ("aarch64", "android") => "android-arm64".to_string(),
         _ => panic!(
             "Unsupported platform: {} {}",
             std::env::consts::ARCH,
