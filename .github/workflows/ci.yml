@@ -16,6 +16,7 @@ jobs:
           - runner: macos-13
           - runner: macos-latest
           - runner: windows-latest
+          - runner: windows-11-arm
 
     runs-on: ${{ matrix.runner }}
     steps:
