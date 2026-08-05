@@ -2,9 +2,9 @@ name: Rust CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   build:
@@ -13,7 +13,7 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-latest
-          - runner: macos-13
+          - runner: macos-15-intel
           - runner: macos-latest
           - runner: windows-latest
 
@@ -40,3 +40,4 @@ jobs:
 
       - name: Run tests
         run: cargo nextest run
+
