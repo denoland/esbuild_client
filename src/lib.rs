@@ -698,6 +698,20 @@ where
     }))
 }
 
+fn spawn_response(
+    packet: protocol::ProtocolPacket,
+    response_tx: &mpsc::Sender<protocol::ProtocolPacket>,
+) -> deno_unsync::JoinHandle<Result<(), AnyError>> {
+    // The protocol task drains this channel and forwards incoming packets.
+    // Blocking packet dispatch on channel capacity can therefore deadlock both
+    // halves of the protocol loop.
+    let response_tx = response_tx.clone();
+    deno_unsync::spawn(async move {
+        response_tx.send(packet).await?;
+        Ok(())
+    })
+}
+
 async fn handle_packet(
     packet: AnyPacket,
     response_tx: &mpsc::Sender<protocol::ProtocolPacket>,
@@ -710,13 +724,12 @@ async fn handle_packet(
                 match index_map.get("command").map(|v| v.as_string()) {
                     Some(Ok(s)) => match s.as_str() {
                         "on-start" => {
-                            handle_hook::<OnStartHook>(
+                            spawn_hook::<OnStartHook>(
                                 packet.id,
-                                protocol::OnStartRequest::from_map(index_map)?,
+                                index_map,
                                 response_tx,
                                 plugin_handler,
-                            )
-                            .await?;
+                            )?;
                             Ok(())
                         }
                         "on-resolve" => {
@@ -748,15 +761,16 @@ async fn handle_packet(
                             Ok(())
                         }
                         "ping" => {
-                            response_tx
-                                .send(protocol::ProtocolPacket {
+                            spawn_response(
+                                protocol::ProtocolPacket {
                                     id: packet.id,
                                     is_request: false,
                                     value: protocol::ProtocolMessage::Response(
                                         protocol::PingResponse::default().into(),
                                     ),
-                                })
-                                .await?;
+                                },
+                                response_tx,
+                            );
                             Ok(())
                         }
                         _ => {
@@ -1110,4 +1124,59 @@ pub struct MetafileOutputImport {
     pub kind: ImportKind,
     #[cfg_attr(feature = "serde", serde(default))]
     pub external: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn request_packet(id: u32, command: &str) -> AnyPacket {
+        let mut value = IndexMap::new();
+        value.insert("command".to_string(), AnyValue::String(command.to_string()));
+        if command == "on-start" {
+            value.insert("key".to_string(), AnyValue::U32(0));
+        }
+        AnyPacket {
+            id,
+            is_request: true,
+            value: AnyValue::Map(value),
+        }
+    }
+
+    #[tokio::test]
+    async fn packet_dispatch_does_not_wait_for_response_capacity() {
+        let (response_tx, _response_rx) = mpsc::channel(1);
+        response_tx
+            .send(protocol::ProtocolPacket {
+                id: 0,
+                is_request: false,
+                value: protocol::ProtocolMessage::Response(
+                    protocol::PingResponse::default().into(),
+                ),
+            })
+            .await
+            .unwrap();
+
+        let pending = Mutex::new(PendingResponseMap::new());
+        let plugin_handler: Arc<dyn PluginHandler> = Arc::new(NoopPluginHandler);
+
+        for (id, command) in ["ping", "on-start"].into_iter().enumerate() {
+            let result = tokio::time::timeout(
+                Duration::from_secs(1),
+                handle_packet(
+                    request_packet(id as u32 + 1, command),
+                    &response_tx,
+                    plugin_handler.clone(),
+                    &pending,
+                ),
+            )
+            .await;
+            assert!(
+                result.is_ok(),
+                "{command} packet dispatch blocked on a full response queue"
+            );
+            result.unwrap().unwrap();
+        }
+    }
 }
