@@ -114,7 +114,11 @@ impl FromAnyValue for String {
     fn from_any_value(value: AnyValue) -> Result<Self, anyhow::Error> {
         match value {
             AnyValue::String(s) => Ok(s),
-            _ => Err(anyhow::anyhow!("expected string")),
+            // esbuild sends some textual fields as raw UTF-8 bytes rather than
+            // as strings, to avoid the encoding cost on its side. `metafile`
+            // switched over in esbuild 0.27.6, for instance.
+            AnyValue::Bytes(b) => Ok(String::from_utf8(b)?),
+            _ => Err(anyhow::anyhow!("expected string, got {value:?}")),
         }
     }
 }

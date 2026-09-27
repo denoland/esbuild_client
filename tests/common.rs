@@ -38,7 +38,7 @@ fn npm_package_name() -> String {
     format!("@esbuild/{}", platform)
 }
 
-pub const ESBUILD_VERSION: &str = "0.25.5";
+pub const ESBUILD_VERSION: &str = "0.28.2";
 
 fn npm_package_url() -> String {
     let package_name = npm_package_name();
