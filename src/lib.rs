@@ -980,6 +980,10 @@ pub enum BuiltinLoader {
     File,
     Copy,
     Empty,
+    Tsx,
+    LocalCss,
+    GlobalCss,
+    Default,
 }
 
 #[derive(Clone, Debug)]
@@ -1045,6 +1049,10 @@ impl Display for BuiltinLoader {
             BuiltinLoader::Binary => write!(f, "binary"),
             BuiltinLoader::Copy => write!(f, "copy"),
             BuiltinLoader::Empty => write!(f, "empty"),
+            BuiltinLoader::Tsx => write!(f, "tsx"),
+            BuiltinLoader::LocalCss => write!(f, "local-css"),
+            BuiltinLoader::GlobalCss => write!(f, "global-css"),
+            BuiltinLoader::Default => write!(f, "default"),
         }
     }
 }
